@@ -1,0 +1,28 @@
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  padding: var(--space-5);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+}
+
+.auth-card h1 {
+  font-size: 20px;
+  margin: 0 0 var(--space-5);
+  color: var(--color-navy);
+}
+
+.auth-card .btn {
+  width: 100%;
+}
+
+.auth-switch {
+  margin-top: var(--space-4);
+  text-align: center;
+}

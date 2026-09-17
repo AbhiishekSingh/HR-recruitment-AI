@@ -1,0 +1,7 @@
+.analytics-page { padding: var(--space-6) var(--space-5); }
+.analytics-page h1 { font-size: 22px; color: var(--color-navy); }
+.funnel-row { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+.funnel-label { width: 160px; font-size: 13px; color: var(--color-text-muted); }
+.funnel-track { flex: 1; height: 10px; background: var(--color-bg); border-radius: 999px; overflow: hidden; }
+.funnel-fill { height: 100%; background: var(--color-accent); }
+.funnel-value { width: 40px; text-align: right; font-weight: 700; }

@@ -1,0 +1,14 @@
+.pipeline-page {
+  padding: var(--space-6) var(--space-5);
+}
+
+.pipeline-page h1 {
+  font-size: 22px;
+  color: var(--color-navy);
+  margin-top: 2px;
+}
+
+.pipeline-table th,
+.pipeline-table td {
+  vertical-align: middle;
+}

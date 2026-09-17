@@ -1,0 +1,15 @@
+.screening-form h3 {
+  font-size: 13px;
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.screening-form .grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.screening-form textarea { width: 100%; font-family: inherit; }

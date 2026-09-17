@@ -1,0 +1,17 @@
+.job-detail {
+  padding: var(--space-6) var(--space-5);
+}
+
+.job-detail h1 {
+  font-size: 22px;
+  color: var(--color-navy);
+}
+
+.job-detail h2 {
+  font-size: 16px;
+  margin-top: 0;
+}
+
+.match-controls {
+  margin-bottom: var(--space-5);
+}
