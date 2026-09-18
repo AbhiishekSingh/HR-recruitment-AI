@@ -1,4 +1,4 @@
-#!D:\React\HR-recruitment-AI\backend\venv\Scripts\python.exe
+#!D:\HR-recruitment-AI\backend\venv\Scripts\python.exe
 """A command line tool for extracting text and images from PDF and
 output it to plain text, html, xml or tags."""
 import argparse
