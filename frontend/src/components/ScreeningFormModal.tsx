@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { submitScreening, ScreeningFormValues } from '../api/assessments'
+import Button from './ui/Button'
 import './ScreeningFormModal.css'
 
 const DEFAULTS: ScreeningFormValues = {
@@ -89,12 +90,12 @@ export default function ScreeningFormModal({ assessmentId, onClose, onSaved }: {
           {selectField('Status', 'final_status', ['Share to Client', 'Hold', 'Reject'])}
           <div className="field"><label>Recruiter remarks</label><textarea rows={2} value={form.recruiter_remarks} onChange={(e) => set('recruiter_remarks', e.target.value)} /></div>
 
-          {mutation.isError && <p className="error-text">Could not save the screening.</p>}
-          <div className="row-between" style={{ marginTop: 'var(--space-4)' }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={mutation.isPending}>
+          {mutation.isError && <p className="error-text" role="alert">Could not save the screening.</p>}
+          <div className="row-between screening-form-actions">
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button type="submit" loading={mutation.isPending}>
               {mutation.isPending ? 'Saving...' : 'Save screening & score'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>

@@ -7,6 +7,10 @@ import { getJobPipeline, startAssessment, sendToClient } from '../api/assessment
 import { BUCKET_LABELS } from '../types'
 import type { AssessmentScored } from '../types'
 import ScreeningFormModal from '../components/ScreeningFormModal'
+import PageHeader from '../components/ui/PageHeader'
+import Button from '../components/ui/Button'
+import EmptyState from '../components/ui/EmptyState'
+import Badge from '../components/ui/Badge'
 import './PipelinePage.css'
 
 export default function PipelinePage() {
@@ -61,19 +65,19 @@ export default function PipelinePage() {
 
   return (
     <div className="container pipeline-page">
-      <div className="row-between">
-        <div>
-          <p className="muted">{job?.title}</p>
-          <h1>Candidate pipeline</h1>
-        </div>
-        <div className="row">
-          <label className="btn btn-secondary">
-            {uploadMutation.isPending ? 'Uploading...' : '+ Add resumes for this role'}
-            <input ref={fileInputRef} type="file" accept=".pdf,.docx" multiple hidden onChange={handleFileChange} disabled={uploadMutation.isPending} />
-          </label>
-          <button className="btn btn-primary" onClick={() => setFindCandidateOpen(true)}>+ Assess one candidate</button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={job?.title}
+        title="Candidate pipeline"
+        actions={
+          <>
+            <label className="btn btn-secondary pipeline-upload-label">
+              {uploadMutation.isPending ? 'Uploading...' : '+ Add resumes for this role'}
+              <input ref={fileInputRef} type="file" accept=".pdf,.docx" multiple hidden onChange={handleFileChange} disabled={uploadMutation.isPending} />
+            </label>
+            <Button onClick={() => setFindCandidateOpen(true)}>+ Assess one candidate</Button>
+          </>
+        }
+      />
 
       {job && (
         <div className="skill-chips">
@@ -97,41 +101,43 @@ export default function PipelinePage() {
       <div className="card">
         {isLoading && <p className="muted">Loading pipeline...</p>}
         {!isLoading && filtered.length === 0 && (
-          <p className="muted">No resumes yet for this role. Add resumes above or assess one candidate directly.</p>
+          <EmptyState message="No resumes yet for this role. Add resumes above or assess one candidate directly." />
         )}
         {filtered.length > 0 && (
-          <table className="table pipeline-table">
-            <thead>
-              <tr>
-                <th></th>
-                <th>Candidate</th>
-                <th>Score</th>
-                <th>Experience</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((a) => (
-                <PipelineRow
-                  key={a.id}
-                  assessment={a}
-                  selected={selected.has(a.id)}
-                  onToggleSelect={() => toggleSelect(a.id)}
-                  onScreen={() => setScreeningTarget({ assessmentId: a.id })}
-                />
-              ))}
-            </tbody>
-          </table>
+          <div className="table-responsive">
+            <table className="table pipeline-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Candidate</th>
+                  <th>Score</th>
+                  <th>Experience</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((a) => (
+                  <PipelineRow
+                    key={a.id}
+                    assessment={a}
+                    selected={selected.has(a.id)}
+                    onToggleSelect={() => toggleSelect(a.id)}
+                    onScreen={() => setScreeningTarget({ assessmentId: a.id })}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
       {selected.size > 0 && (
         <div className="bulk-bar">
           <span>{selected.size} selected</span>
-          <button className="btn btn-primary" onClick={() => sendMutation.mutate()} disabled={sendMutation.isPending}>
+          <Button onClick={() => sendMutation.mutate()} loading={sendMutation.isPending}>
             {sendMutation.isPending ? 'Sending...' : 'Send selected to client'}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -178,17 +184,17 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
       </td>
       <td className="muted">—</td>
       <td>
-        <span className={`badge ${
-          a.bucket === 'strong' || a.bucket === 'good' ? 'badge-shortlist' :
-          a.bucket === 'rejected' || a.bucket === 'notrec' ? 'badge-pass' : 'badge-review'
-        }`}>
+        <Badge variant={
+          a.bucket === 'strong' || a.bucket === 'good' ? 'shortlist' :
+          a.bucket === 'rejected' || a.bucket === 'notrec' ? 'pass' : 'review'
+        }>
           {BUCKET_LABELS[a.bucket]}
-        </span>
+        </Badge>
       </td>
       <td>
-        <button className="btn btn-secondary" onClick={onScreen}>
+        <Button variant="secondary" size="sm" onClick={onScreen}>
           {isPending ? 'Complete screening →' : 'Edit screening'}
-        </button>
+        </Button>
       </td>
     </tr>
   )
@@ -215,15 +221,15 @@ function FindCandidateModal({ jobId, onClose, onSelected }: { jobId: string; onC
                 <strong>{c.name}</strong>
                 <div className="muted">{c.email} · {c.experience_years} yrs</div>
               </div>
-              <button className="btn btn-secondary" onClick={() => startMutation.mutate(c.id)} disabled={startMutation.isPending}>
+              <Button variant="secondary" size="sm" onClick={() => startMutation.mutate(c.id)} loading={startMutation.isPending}>
                 Select &amp; screen
-              </button>
+              </Button>
             </div>
           ))}
-          {candidates?.length === 0 && <p className="muted">No candidates match. Add one from the Candidates directory first.</p>}
+          {candidates?.length === 0 && <EmptyState message="No candidates match. Add one from the Candidates directory first." />}
         </div>
         <div className="row-between" style={{ marginTop: 'var(--space-4)' }}>
-          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
         </div>
       </div>
     </div>

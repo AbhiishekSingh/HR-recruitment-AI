@@ -1,0 +1,6 @@
+/* Page-specific overrides for the Register screen. Shared card/layout
+   styles live in components/AuthLayout.css. */
+.register-form {
+  display: flex;
+  flex-direction: column;
+}

@@ -1,2 +1,6 @@
-.candidates-page { padding: var(--space-6) var(--space-5); }
-.candidates-page h1 { font-size: 22px; color: var(--color-navy); margin-bottom: 2px; }
+.candidates-page { padding: var(--space-5) 0 var(--space-6); }
+.candidates-search { margin-bottom: var(--space-4); }
+
+@media (min-width: 600px) {
+  .candidates-page { padding: var(--space-6) 0; }
+}

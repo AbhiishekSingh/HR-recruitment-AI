@@ -1,6 +1,9 @@
 import { useState, FormEvent } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listCandidates, createCandidate } from '../api/candidates'
+import PageHeader from '../components/ui/PageHeader'
+import Button from '../components/ui/Button'
+import EmptyState from '../components/ui/EmptyState'
 import './CandidatesDirectoryPage.css'
 
 export default function CandidatesDirectoryPage() {
@@ -37,15 +40,15 @@ export default function CandidatesDirectoryPage() {
 
   return (
     <div className="container candidates-page">
-      <div className="row-between">
-        <div>
-          <h1>Candidates</h1>
-          <p className="muted">One record per person, independent of any specific role.</p>
-        </div>
-        <button className="btn btn-primary" onClick={() => setShowForm((v) => !v)}>
-          {showForm ? 'Cancel' : '+ Add one candidate'}
-        </button>
-      </div>
+      <PageHeader
+        title="Candidates"
+        subtitle="One record per person, independent of any specific role."
+        actions={
+          <Button variant={showForm ? 'secondary' : 'primary'} onClick={() => setShowForm((v) => !v)}>
+            {showForm ? 'Cancel' : '+ Add one candidate'}
+          </Button>
+        }
+      />
 
       {showForm && (
         <form className="card" onSubmit={handleSubmit} style={{ marginBottom: 'var(--space-5)' }}>
@@ -62,33 +65,35 @@ export default function CandidatesDirectoryPage() {
             <div className="field"><label>Skills (comma separated)</label><input name="resume_skills" placeholder="React, TypeScript" /></div>
           </div>
           <div className="field"><label>Resume summary</label><textarea name="resume_summary" rows={2} /></div>
-          {createMutation.isError && <p className="error-text">Could not save — check the email isn't already in use.</p>}
-          <button className="btn btn-primary" type="submit" disabled={createMutation.isPending}>
+          {createMutation.isError && <p className="error-text" role="alert">Could not save — check the email isn't already in use.</p>}
+          <Button type="submit" loading={createMutation.isPending}>
             {createMutation.isPending ? 'Saving...' : 'Save candidate'}
-          </button>
+          </Button>
         </form>
       )}
 
-      <input className="text-input-wide" placeholder="Search name, email, or phone…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ marginBottom: 'var(--space-4)' }} />
+      <input className="text-input-wide candidates-search" placeholder="Search name, email, or phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
 
       <div className="card">
         {isLoading && <p className="muted">Loading...</p>}
-        {!isLoading && candidates?.length === 0 && <p className="muted">No candidates match.</p>}
+        {!isLoading && candidates?.length === 0 && <EmptyState message="No candidates match." />}
         {candidates && candidates.length > 0 && (
-          <table className="table">
-            <thead><tr><th>Candidate</th><th>Contact</th><th>Experience</th><th>Skills</th><th>Status</th></tr></thead>
-            <tbody>
-              {candidates.map((c) => (
-                <tr key={c.id}>
-                  <td><strong>{c.name}</strong><div className="muted">{c.current_company}</div></td>
-                  <td>{c.email}<div className="muted">{c.phone}</div></td>
-                  <td>{c.experience_years} yrs</td>
-                  <td className="muted">{c.resume_skills.join(', ') || '—'}</td>
-                  <td><span className="badge badge-review">{c.status}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-responsive">
+            <table className="table">
+              <thead><tr><th>Candidate</th><th>Contact</th><th>Experience</th><th>Skills</th><th>Status</th></tr></thead>
+              <tbody>
+                {candidates.map((c) => (
+                  <tr key={c.id}>
+                    <td><strong>{c.name}</strong><div className="muted">{c.current_company}</div></td>
+                    <td>{c.email}<div className="muted">{c.phone}</div></td>
+                    <td>{c.experience_years} yrs</td>
+                    <td className="muted">{c.resume_skills.join(', ') || '—'}</td>
+                    <td><span className="badge badge-review">{c.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

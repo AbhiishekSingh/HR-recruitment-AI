@@ -1,0 +1,29 @@
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.page-header-text h1 {
+  font-size: var(--text-xl);
+  color: var(--color-navy);
+  margin: 0;
+}
+
+.page-header-eyebrow {
+  margin: 0 0 2px;
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+@media (min-width: 600px) {
+  .page-header-text h1 { font-size: var(--text-2xl); }
+}

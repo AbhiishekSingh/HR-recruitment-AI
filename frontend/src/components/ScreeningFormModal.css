@@ -7,9 +7,15 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
-.screening-form .grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
-}
 .screening-form textarea { width: 100%; font-family: inherit; }
+
+.screening-form-actions {
+  margin-top: var(--space-4);
+  flex-direction: column-reverse;
+}
+
+@media (min-width: 480px) {
+  .screening-form-actions {
+    flex-direction: row;
+  }
+}

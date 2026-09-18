@@ -1,7 +1,6 @@
-.companies-page { padding: var(--space-6) var(--space-5); }
-.companies-page h1 { font-size: 22px; color: var(--color-navy); }
+.companies-page { padding: var(--space-5) 0 var(--space-6); }
 .company-block { margin-bottom: var(--space-5); }
-.company-block h2 { font-size: 17px; margin: 0; }
+.company-block h2 { font-size: var(--text-lg); margin: 0; }
 .jd-form {
   margin: var(--space-4) 0;
   padding: var(--space-4);
@@ -10,3 +9,7 @@
   border: 1px solid var(--color-border);
 }
 .jd-form textarea { width: 100%; font-family: inherit; }
+
+@media (min-width: 600px) {
+  .companies-page { padding: var(--space-6) 0; }
+}

@@ -1,0 +1,6 @@
+/* Page-specific overrides for the Login screen. Shared card/layout styles
+   live in components/AuthLayout.css. */
+.login-form {
+  display: flex;
+  flex-direction: column;
+}

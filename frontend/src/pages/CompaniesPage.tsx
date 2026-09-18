@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listCompanies, createCompany } from '../api/companies'
 import { listJobs, createJob } from '../api/jobs'
+import PageHeader from '../components/ui/PageHeader'
+import Button from '../components/ui/Button'
+import EmptyState from '../components/ui/EmptyState'
+import Badge from '../components/ui/Badge'
 import './CompaniesPage.css'
 
 export default function CompaniesPage() {
@@ -62,12 +66,14 @@ export default function CompaniesPage() {
 
   return (
     <div className="container companies-page">
-      <div className="row-between">
-        <h1>Companies &amp; roles</h1>
-        <button className="btn btn-primary" onClick={() => setShowCompanyForm((v) => !v)}>
-          {showCompanyForm ? 'Cancel' : '+ Onboard company'}
-        </button>
-      </div>
+      <PageHeader
+        title="Companies & roles"
+        actions={
+          <Button variant={showCompanyForm ? 'secondary' : 'primary'} onClick={() => setShowCompanyForm((v) => !v)}>
+            {showCompanyForm ? 'Cancel' : '+ Onboard company'}
+          </Button>
+        }
+      />
 
       {showCompanyForm && (
         <form className="card" onSubmit={handleCompanySubmit} style={{ marginBottom: 'var(--space-5)' }}>
@@ -82,9 +88,9 @@ export default function CompaniesPage() {
               <option>Premium</option>
             </select>
           </div>
-          <button className="btn btn-primary" type="submit" disabled={companyMutation.isPending}>
+          <Button type="submit" loading={companyMutation.isPending}>
             {companyMutation.isPending ? 'Saving...' : 'Onboard company'}
-          </button>
+          </Button>
         </form>
       )}
 
@@ -99,12 +105,12 @@ export default function CompaniesPage() {
                 <h2>{company.name}</h2>
                 <p className="muted">{company.industry} · {company.contact_name}</p>
               </div>
-              <button
-                className="btn btn-secondary"
+              <Button
+                variant="secondary"
                 onClick={() => setJdFormForCompany(jdFormForCompany === company.id ? null : company.id)}
               >
                 + New requisition
-              </button>
+              </Button>
             </div>
 
             {jdFormForCompany === company.id && (
@@ -122,30 +128,32 @@ export default function CompaniesPage() {
                 <div className="field"><label>Max notice period (days)</label><input name="max_notice_days" type="number" defaultValue={45} required /></div>
                 <div className="field"><label>Required skills (comma separated)</label><input name="required_skills" placeholder="React, TypeScript" required /></div>
                 <div className="field"><label>Job description (optional, for AI extraction later)</label><textarea name="raw_text" rows={3} /></div>
-                <button className="btn btn-primary" type="submit" disabled={jobMutation.isPending}>
+                <Button type="submit" loading={jobMutation.isPending}>
                   {jobMutation.isPending ? 'Creating...' : 'Create requisition'}
-                </button>
+                </Button>
               </form>
             )}
 
             {companyJobs.length === 0 ? (
-              <p className="muted">No requisitions yet for this company.</p>
+              <EmptyState message="No requisitions yet for this company." />
             ) : (
-              <table className="table">
-                <thead><tr><th>Role</th><th>Locations</th><th>Budget</th><th>Experience</th><th>Status</th><th></th></tr></thead>
-                <tbody>
-                  {companyJobs.map((jd) => (
-                    <tr key={jd.id}>
-                      <td><strong>{jd.title}</strong></td>
-                      <td>{jd.locations.join(', ')}</td>
-                      <td>₹{(jd.budget_min / 100000).toFixed(1)}L – ₹{(jd.budget_max / 100000).toFixed(1)}L</td>
-                      <td>{jd.experience_min}–{jd.experience_max} yrs</td>
-                      <td><span className={`badge ${jd.status === 'Open' ? 'badge-shortlist' : 'badge-pass'}`}>{jd.status}</span></td>
-                      <td><button className="btn btn-secondary" onClick={() => navigate(`/pipeline/${jd.id}`)}>Open pipeline →</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-responsive">
+                <table className="table">
+                  <thead><tr><th>Role</th><th>Locations</th><th>Budget</th><th>Experience</th><th>Status</th><th></th></tr></thead>
+                  <tbody>
+                    {companyJobs.map((jd) => (
+                      <tr key={jd.id}>
+                        <td><strong>{jd.title}</strong></td>
+                        <td>{jd.locations.join(', ')}</td>
+                        <td>₹{(jd.budget_min / 100000).toFixed(1)}L – ₹{(jd.budget_max / 100000).toFixed(1)}L</td>
+                        <td>{jd.experience_min}–{jd.experience_max} yrs</td>
+                        <td><Badge variant={jd.status === 'Open' ? 'shortlist' : 'pass'}>{jd.status}</Badge></td>
+                        <td><Button variant="secondary" size="sm" onClick={() => navigate(`/pipeline/${jd.id}`)}>Open pipeline →</Button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
         )

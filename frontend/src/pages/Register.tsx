@@ -2,7 +2,9 @@ import { useState, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { register, login } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
-import './AuthPages.css'
+import AuthLayout from '../components/AuthLayout'
+import Button from '../components/ui/Button'
+import './Register.css'
 
 export default function Register() {
   const [name, setName] = useState('')
@@ -32,29 +34,28 @@ export default function Register() {
   }
 
   return (
-    <div className="auth-page">
-      <form className="card auth-card" onSubmit={handleSubmit}>
-        <h1>Create an account</h1>
+    <AuthLayout
+      title="Create an account"
+      footer={<>Already have an account? <Link to="/login">Log in</Link></>}
+    >
+      <form className="register-form" onSubmit={handleSubmit}>
         <div className="field">
           <label htmlFor="name">Name</label>
-          <input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
+          <input id="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
         <div className="field">
           <label htmlFor="email">Email</label>
-          <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         </div>
         <div className="field">
           <label htmlFor="password">Password</label>
-          <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input id="password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </div>
-        {error && <p className="error-text">{error}</p>}
-        <button className="btn btn-primary" type="submit" disabled={loading}>
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <Button type="submit" loading={loading} block>
           {loading ? 'Creating account...' : 'Register'}
-        </button>
-        <p className="muted auth-switch">
-          Already have an account? <Link to="/login">Log in</Link>
-        </p>
+        </Button>
       </form>
-    </div>
+    </AuthLayout>
   )
 }

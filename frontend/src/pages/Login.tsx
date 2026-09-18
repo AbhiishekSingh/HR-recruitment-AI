@@ -2,7 +2,9 @@ import { useState, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { login } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
-import './AuthPages.css'
+import AuthLayout from '../components/AuthLayout'
+import Button from '../components/ui/Button'
+import './Login.css'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -28,25 +30,24 @@ export default function Login() {
   }
 
   return (
-    <div className="auth-page">
-      <form className="card auth-card" onSubmit={handleSubmit}>
-        <h1>Log in</h1>
+    <AuthLayout
+      title="Log in"
+      footer={<>No account? <Link to="/register">Register</Link></>}
+    >
+      <form className="login-form" onSubmit={handleSubmit}>
         <div className="field">
           <label htmlFor="email">Email</label>
-          <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         </div>
         <div className="field">
           <label htmlFor="password">Password</label>
-          <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </div>
-        {error && <p className="error-text">{error}</p>}
-        <button className="btn btn-primary" type="submit" disabled={loading}>
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <Button type="submit" loading={loading} block>
           {loading ? 'Logging in...' : 'Log in'}
-        </button>
-        <p className="muted auth-switch">
-          No account? <Link to="/register">Register</Link>
-        </p>
+        </Button>
       </form>
-    </div>
+    </AuthLayout>
   )
 }

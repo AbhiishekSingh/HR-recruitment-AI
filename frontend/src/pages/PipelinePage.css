@@ -1,14 +1,16 @@
 .pipeline-page {
-  padding: var(--space-6) var(--space-5);
+  padding: var(--space-5) 0 var(--space-6);
 }
 
-.pipeline-page h1 {
-  font-size: 22px;
-  color: var(--color-navy);
-  margin-top: 2px;
+.pipeline-upload-label {
+  cursor: pointer;
 }
 
 .pipeline-table th,
 .pipeline-table td {
   vertical-align: middle;
+}
+
+@media (min-width: 600px) {
+  .pipeline-page { padding: var(--space-6) 0; }
 }
