@@ -37,3 +37,8 @@ class Candidate(Base):
     # transitions get wired in when extraction/embedding work happens)
 
     added_on: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Soft delete: null = active. candidate_profiles/embeddings/match_results
+    # keep pointing at this row's id even after a soft delete, so AI history
+    # for the person isn't orphaned by a hard DELETE.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

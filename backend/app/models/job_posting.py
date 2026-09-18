@@ -37,3 +37,8 @@ class JobPosting(Base):
     opened_on: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     target_close: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Soft delete: null = active. Closing a requisition uses `status`;
+    # deleted_at is only for "this job shouldn't have existed" cases, so
+    # assessments/match_results tied to it stay intact for audit purposes.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

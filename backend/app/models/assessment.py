@@ -66,3 +66,7 @@ class Assessment(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Soft delete: null = active. A screening record is part of the decision
+    # audit trail (who screened whom, when, and why) — never hard-deleted.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

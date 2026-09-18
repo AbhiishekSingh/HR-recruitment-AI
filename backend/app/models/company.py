@@ -19,3 +19,7 @@ class Company(Base):
     contact_email: Mapped[str] = mapped_column(String(255), default="")
     tier: Mapped[str] = mapped_column(String(50), default="Standard")  # Standard | Premium
     onboarded_on: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Soft delete: null = active. Set instead of a hard DELETE so historical
+    # jobs/assessments tied to this company stay intact and auditable.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

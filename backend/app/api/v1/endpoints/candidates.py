@@ -35,10 +35,7 @@ async def create_candidate(
     if existing.scalar_one_or_none():
         raise HTTPException(400, "A candidate with this email already exists")
 
-    # candidate = Candidate(**payload.model_dump(), email=payload.email.lower(), status="ready")
-    data = payload.model_dump()
-    data["email"] = data["email"].lower()
-    candidate = Candidate(**data, status="ready")
+    candidate = Candidate(**payload.model_dump(), email=payload.email.lower(), status="ready")
     db.add(candidate)
     await db.commit()
     await db.refresh(candidate)
