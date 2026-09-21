@@ -64,6 +64,13 @@ class Assessment(Base):
     sent_to_client: Mapped[bool] = mapped_column(Boolean, default=False)
     client_feedback: Mapped[str | None] = mapped_column(String(30), nullable=True)  # Interested | Not Interested
 
+    # Who approved this assessment internally, and which client contact it was
+    # submitted to — free text for now, same pattern as recruiter_remarks etc.
+    # Defaulted to "" rather than NOT NULL-with-no-default so existing rows
+    # (and any code path that doesn't set these yet) stay valid.
+    approved_by: Mapped[str] = mapped_column(String(200), default="")
+    submitted_to: Mapped[str] = mapped_column(String(200), default="")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
