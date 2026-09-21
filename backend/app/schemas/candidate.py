@@ -22,6 +22,7 @@ class CandidateOut(BaseModel):
     experience_years: float
     resume_skills: list[str]
     resume_summary: str
+    file_path: str | None
     status: str
     added_on: datetime
 

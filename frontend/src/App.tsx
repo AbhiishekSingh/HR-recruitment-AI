@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import ProtectedRoute from './components/ProtectedRoute'
+import GuestRoute from './components/GuestRoute'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import CompaniesPage from './pages/CompaniesPage'
@@ -13,8 +14,8 @@ export default function App() {
     <div className="app-shell">
       <Navbar />
       <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+        <Route path="/login" element={<GuestRoute><Login /></GuestRoute>} />
+        <Route path="/register" element={<GuestRoute><Register /></GuestRoute>} />
         <Route path="/" element={<ProtectedRoute><Navigate to="/companies" replace /></ProtectedRoute>} />
         <Route path="/companies" element={<ProtectedRoute><CompaniesPage /></ProtectedRoute>} />
         <Route path="/pipeline/:jobId" element={<ProtectedRoute><PipelinePage /></ProtectedRoute>} />

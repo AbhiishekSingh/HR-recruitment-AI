@@ -2,6 +2,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 
@@ -18,6 +19,35 @@ from app.workers.tasks_ingestion import ingest_resume_task
 router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5MB, enforced server-side (never trust the browser alone)
+
+
+def _save_resume_file(candidate_id: uuid.UUID, filename: str, contents: bytes) -> str:
+    """Validates and writes one resume file to disk, returning the stored
+    path. Shared by bulk-upload and the single-candidate (re)upload endpoint
+    so there is exactly one place that decides how/where resumes are stored."""
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(400, f"Unsupported file type: {filename}")
+    if len(contents) > MAX_RESUME_BYTES:
+        raise HTTPException(400, f"{filename} exceeds the 5MB resume size limit")
+
+    upload_dir = Path(settings.upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = upload_dir / f"{candidate_id}{ext}"
+    dest_path.write_bytes(contents)
+    return str(dest_path)
+
+
+def _delete_resume_file(file_path: str | None) -> None:
+    """Removes a resume file from disk if it exists. Never raises — a
+    missing file on disk (already deleted, moved, etc.) shouldn't block the
+    database update that's about to happen."""
+    if not file_path:
+        return
+    path = Path(file_path)
+    if path.exists():
+        path.unlink()
 
 
 @router.post("", response_model=CandidateOut)
@@ -64,23 +94,16 @@ async def bulk_upload_resumes(
             raise HTTPException(404, "Job posting not found")
 
     created = []
-    upload_dir = Path(settings.upload_dir)
-    upload_dir.mkdir(parents=True, exist_ok=True)
 
     for file in files:
-        ext = Path(file.filename).suffix.lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            raise HTTPException(400, f"Unsupported file type: {file.filename}")
-
         candidate_id = uuid.uuid4()
-        dest_path = upload_dir / f"{candidate_id}{ext}"
         contents = await file.read()
-        dest_path.write_bytes(contents)
+        dest_path = _save_resume_file(candidate_id, file.filename, contents)
 
         guessed_name = Path(file.filename).stem.replace("_", " ").replace("-", " ").title()
         candidate = Candidate(
             id=candidate_id, name=guessed_name, email=f"{candidate_id}@pending.local",
-            file_path=str(dest_path), status="queued",
+            file_path=dest_path, status="queued",
         )
         db.add(candidate)
         await db.flush()
@@ -91,7 +114,7 @@ async def bulk_upload_resumes(
         await db.commit()
         await db.refresh(candidate)
 
-        ingest_resume_task.delay(str(candidate.id), str(dest_path))
+        ingest_resume_task.delay(str(candidate.id), dest_path)
         created.append(candidate)
 
     return created
@@ -116,6 +139,78 @@ async def get_candidate(candidate_id: uuid.UUID, db: AsyncSession = Depends(get_
     candidate = await db.get(Candidate, candidate_id)
     if not candidate:
         raise HTTPException(404, "Candidate not found")
+    return candidate
+
+
+@router.get("/{candidate_id}/resume")
+async def view_candidate_resume(
+    candidate_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Streams the candidate's resume file straight from disk (FileResponse
+    streams in chunks, never loads the whole file into memory) so viewing a
+    5,000-candidate directory's worth of resumes stays cheap regardless of
+    how many exist."""
+    candidate = await db.get(Candidate, candidate_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+    if not candidate.file_path:
+        raise HTTPException(404, "No resume on file for this candidate")
+
+    path = Path(candidate.file_path)
+    if not path.exists():
+        raise HTTPException(404, "Resume file is missing from storage")
+
+    safe_name = candidate.name.strip().replace(" ", "_") or "resume"
+    return FileResponse(path, filename=f"{safe_name}{path.suffix}")
+
+
+@router.put("/{candidate_id}/resume", response_model=CandidateOut)
+async def upload_candidate_resume(
+    candidate_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Attaches a resume to a candidate who doesn't have one yet, or
+    replaces an existing one — the single place (besides bulk upload) that
+    writes Candidate.file_path, so there's never more than one resume file
+    on disk per candidate."""
+    candidate = await db.get(Candidate, candidate_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+
+    contents = await file.read()
+    new_path = _save_resume_file(candidate_id, file.filename, contents)
+
+    # Replace, don't accumulate: remove the old file only after the new one
+    # has been written successfully.
+    _delete_resume_file(candidate.file_path)
+
+    candidate.file_path = new_path
+    candidate.status = "queued"  # same "needs (re)processing" state bulk upload sets
+    await db.commit()
+    await db.refresh(candidate)
+
+    ingest_resume_task.delay(str(candidate.id), new_path)
+    return candidate
+
+
+@router.delete("/{candidate_id}/resume", response_model=CandidateOut)
+async def delete_candidate_resume(
+    candidate_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    candidate = await db.get(Candidate, candidate_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+
+    _delete_resume_file(candidate.file_path)
+    candidate.file_path = None
+    await db.commit()
+    await db.refresh(candidate)
     return candidate
 
 

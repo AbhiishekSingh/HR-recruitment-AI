@@ -39,6 +39,7 @@ export interface Candidate {
   experience_years: number
   resume_skills: string[]
   resume_summary: string
+  file_path: string | null
   status: string // queued | extracting | embedding | ready | failed | needs_review
   added_on: string
 }
@@ -46,6 +47,13 @@ export interface Candidate {
 export interface AssessmentScored {
   id: string
   candidate_id: string
+  // Joined in from the Candidate record by the backend's pipeline query,
+  // so the frontend never has to fetch the candidate list separately
+  // just to label a row.
+  candidate_name: string
+  candidate_email: string
+  candidate_experience_years: number
+  candidate_current_company: string
   job_id: string
   current_ctc: number | null
   expected_ctc: number | null
@@ -68,6 +76,8 @@ export interface AssessmentScored {
   red_flags: string
   final_status: string // Pending Screening | Share to Client | Hold | Reject
   recruiter_remarks: string
+  approved_by: string
+  submitted_to: string
   screened: boolean
   sent_to_client: boolean
   client_feedback: string | null

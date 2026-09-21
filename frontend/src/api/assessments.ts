@@ -38,6 +38,8 @@ export interface ScreeningFormValues {
   red_flags: string
   final_status: string
   recruiter_remarks: string
+  approved_by: string
+  submitted_to: string
 }
 
 export async function submitScreening(assessmentId: string, payload: ScreeningFormValues): Promise<AssessmentScored> {

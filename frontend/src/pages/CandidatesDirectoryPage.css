@@ -1,6 +1,10 @@
 .candidates-page { padding: var(--space-5) 0 var(--space-6); }
 .candidates-search { margin-bottom: var(--space-4); }
 
+.candidates-row {
+  cursor: pointer;
+}
+
 @media (min-width: 600px) {
   .candidates-page { padding: var(--space-6) 0; }
 }

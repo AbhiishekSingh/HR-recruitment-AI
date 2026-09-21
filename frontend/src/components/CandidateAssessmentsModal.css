@@ -1,0 +1,39 @@
+.candidate-modal-subtitle {
+  margin-top: -4px;
+  margin-bottom: var(--space-4);
+}
+
+.candidate-assessment-list {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.candidate-assessment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+}
+
+.candidate-assessment-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.candidate-assessment-meta {
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.candidate-modal-actions {
+  margin-top: var(--space-4);
+}

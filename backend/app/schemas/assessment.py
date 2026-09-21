@@ -66,6 +66,12 @@ class AssessmentOut(BaseModel):
 
 class AssessmentScored(AssessmentOut):
     """AssessmentOut plus the computed score breakdown, for pipeline/detail views."""
+    # Joined in from the related Candidate row so the frontend never has to
+    # make a second /candidates call just to label a pipeline/assessment row.
+    candidate_name: str
+    candidate_email: str
+    candidate_experience_years: float
+    candidate_current_company: str
     ai_score: int | None = None
     matched_skills: list[str] = []
     missing_skills: list[str] = []

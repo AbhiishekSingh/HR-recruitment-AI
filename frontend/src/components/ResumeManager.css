@@ -1,0 +1,29 @@
+.resume-manager {
+  padding: var(--space-3);
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-4);
+}
+
+.resume-manager-status {
+  margin-bottom: var(--space-2);
+}
+
+.resume-manager-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.resume-manager-upload-label {
+  cursor: pointer;
+}
+
+.resume-manager-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}

@@ -1,13 +1,13 @@
-.screening-form h3 {
-  font-size: 13px;
-  margin-top: var(--space-4);
-  border-top: 1px solid var(--color-border);
-  padding-top: var(--space-3);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
 .screening-form textarea { width: 100%; font-family: inherit; }
+
+.screening-form-subtitle {
+  margin-top: -8px;
+  margin-bottom: var(--space-4);
+}
+
+.screening-form-note {
+  margin: 0;
+}
 
 .screening-form-actions {
   margin-top: var(--space-4);
@@ -18,4 +18,49 @@
   .screening-form-actions {
     flex-direction: row;
   }
+}
+
+/* --- Pill-style radio groups (Profile Screening / Final Status) --- */
+.pill-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.pill-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.pill-radio input {
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.pill-radio:hover {
+  border-color: var(--color-accent);
+}
+
+.pill-radio-selected {
+  background: var(--color-accent-light);
+  border-color: var(--color-accent);
+  color: var(--color-navy);
+  font-weight: 600;
+}
+
+/* --- Teal submit button, scoped to this form's template look only --- */
+.btn.btn-teal {
+  background: #0f766e;
+  border-color: #0f766e;
+}
+.btn.btn-teal:hover:not(:disabled) {
+  background: #0b5c56;
 }

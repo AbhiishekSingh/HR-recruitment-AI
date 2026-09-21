@@ -20,6 +20,12 @@ def _to_scored(assessment: Assessment, candidate: Candidate, job: JobPosting) ->
     result = compute_final_score(job, candidate, assessment)
     return {
         **{c.name: getattr(assessment, c.name) for c in assessment.__table__.columns},
+        # Carried over from the related Candidate row (already loaded by the
+        # caller) so the frontend gets a display-ready row in one response.
+        "candidate_name": candidate.name,
+        "candidate_email": candidate.email,
+        "candidate_experience_years": candidate.experience_years,
+        "candidate_current_company": candidate.current_company,
         "ai_score": result["ai"]["score"],
         "matched_skills": result["ai"]["matched_skills"],
         "missing_skills": result["ai"]["missing_skills"],
@@ -42,9 +48,17 @@ async def get_job_pipeline(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     result = await db.execute(select(Assessment).where(Assessment.job_id == job_id))
     assessments = result.scalars().all()
 
+    # Batch-fetch every candidate this pipeline needs in one query instead of
+    # one `db.get()` per row (was N+1 — 50 assessments meant 51 round trips).
+    candidate_ids = {a.candidate_id for a in assessments}
+    candidates_by_id: dict[uuid.UUID, Candidate] = {}
+    if candidate_ids:
+        cand_result = await db.execute(select(Candidate).where(Candidate.id.in_(candidate_ids)))
+        candidates_by_id = {c.id: c for c in cand_result.scalars().all()}
+
     scored = []
     for a in assessments:
-        candidate = await db.get(Candidate, a.candidate_id)
+        candidate = candidates_by_id.get(a.candidate_id)
         if candidate:
             scored.append(_to_scored(a, candidate, job))
 

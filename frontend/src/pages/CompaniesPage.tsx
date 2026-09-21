@@ -81,13 +81,13 @@ export default function CompaniesPage() {
           <div className="field"><label>Industry</label><input name="industry" /></div>
           <div className="field"><label>Primary contact</label><input name="contact_name" /></div>
           <div className="field"><label>Contact email</label><input name="contact_email" type="email" /></div>
-          <div className="field">
+          {/* <div className="field">
             <label>Tier</label>
             <select name="tier" defaultValue="Standard">
               <option>Standard</option>
               <option>Premium</option>
             </select>
-          </div>
+          </div> */}
           <Button type="submit" loading={companyMutation.isPending}>
             {companyMutation.isPending ? 'Saving...' : 'Onboard company'}
           </Button>

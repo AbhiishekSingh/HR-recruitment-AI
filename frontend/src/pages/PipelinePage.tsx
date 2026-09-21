@@ -21,7 +21,9 @@ export default function PipelinePage() {
   const [bucketFilter, setBucketFilter] = useState('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [findCandidateOpen, setFindCandidateOpen] = useState(false)
-  const [screeningTarget, setScreeningTarget] = useState<{ assessmentId: string } | null>(null)
+  // Store the full row (already fetched, no extra call needed) so the
+  // screening modal can prefill from it and display candidate/job details.
+  const [screeningTarget, setScreeningTarget] = useState<AssessmentScored | null>(null)
 
   const { data: job } = useQuery({ queryKey: ['job', jobId], queryFn: () => getJob(jobId!), enabled: !!jobId })
 
@@ -66,6 +68,7 @@ export default function PipelinePage() {
   return (
     <div className="container pipeline-page">
       <PageHeader
+        backTo="/companies"
         eyebrow={job?.title}
         title="Candidate pipeline"
         actions={
@@ -123,7 +126,7 @@ export default function PipelinePage() {
                     assessment={a}
                     selected={selected.has(a.id)}
                     onToggleSelect={() => toggleSelect(a.id)}
-                    onScreen={() => setScreeningTarget({ assessmentId: a.id })}
+                    onScreen={() => setScreeningTarget(a)}
                   />
                 ))}
               </tbody>
@@ -145,13 +148,14 @@ export default function PipelinePage() {
         <FindCandidateModal
           jobId={jobId}
           onClose={() => setFindCandidateOpen(false)}
-          onSelected={(assessmentId) => { setFindCandidateOpen(false); setScreeningTarget({ assessmentId }) }}
+          onSelected={(a) => { setFindCandidateOpen(false); setScreeningTarget(a) }}
         />
       )}
 
       {screeningTarget && (
         <ScreeningFormModal
-          assessmentId={screeningTarget.assessmentId}
+          assessment={screeningTarget}
+          jobTitle={job?.title || ''}
           onClose={() => setScreeningTarget(null)}
           onSaved={() => { setScreeningTarget(null); queryClient.invalidateQueries({ queryKey: ['pipeline', jobId] }) }}
         />
@@ -174,7 +178,10 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
       <td>
         <input type="checkbox" checked={selected} onChange={onToggleSelect} disabled={isPending || a.bucket === 'rejected'} />
       </td>
-      <td>Candidate {a.candidate_id.slice(0, 8)}</td>
+      <td>
+        <strong>{a.candidate_name}</strong>
+        <div className="muted">{a.candidate_email}</div>
+      </td>
       <td>
         {isPending ? (
           <><strong>{a.ai_score}</strong><div className="muted" style={{ fontSize: 11 }}>AI fit only</div></>
@@ -182,7 +189,7 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
           <strong>{a.final_score}</strong>
         )}
       </td>
-      <td className="muted">—</td>
+      <td className="muted">{a.candidate_experience_years} yrs</td>
       <td>
         <Badge variant={
           a.bucket === 'strong' || a.bucket === 'good' ? 'shortlist' :
@@ -200,13 +207,13 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
   )
 }
 
-function FindCandidateModal({ jobId, onClose, onSelected }: { jobId: string; onClose: () => void; onSelected: (assessmentId: string) => void }) {
+function FindCandidateModal({ jobId, onClose, onSelected }: { jobId: string; onClose: () => void; onSelected: (assessment: AssessmentScored) => void }) {
   const [search, setSearch] = useState('')
   const { data: candidates } = useQuery({ queryKey: ['candidates', search], queryFn: () => listCandidates(search) })
 
   const startMutation = useMutation({
     mutationFn: (candidateId: string) => startAssessment(candidateId, jobId),
-    onSuccess: (assessment) => onSelected(assessment.id),
+    onSuccess: (assessment) => onSelected(assessment),
   })
 
   return (
