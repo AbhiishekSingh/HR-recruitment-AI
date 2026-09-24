@@ -54,6 +54,7 @@ export interface AssessmentScored {
   candidate_email: string
   candidate_experience_years: number
   candidate_current_company: string
+  candidate_status: string // queued | extracting | embedding | ready | failed | needs_review
   job_id: string
   current_ctc: number | null
   expected_ctc: number | null
@@ -84,6 +85,10 @@ export interface AssessmentScored {
   created_at: string
   // computed, not stored input:
   ai_score: number | null
+  // "ai_pipeline" = real GPT-5 match score; "estimate" = matching hasn't
+  // run yet for this candidate/job pair, this is the keyword-overlap
+  // fallback. null only for the legacy case where no ai score exists at all.
+  ai_source: 'ai_pipeline' | 'estimate' | null
   matched_skills: string[]
   missing_skills: string[]
   assessment_score: number | null

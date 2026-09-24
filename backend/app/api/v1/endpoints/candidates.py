@@ -1,4 +1,7 @@
+import logging
+import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
@@ -14,9 +17,13 @@ from app.models.assessment import Assessment
 from app.models.job_posting import JobPosting
 from app.models.user import User
 from app.schemas.candidate import CandidateCreate, CandidateOut
+from app.services.extraction.text_router import extract_text, ScannedPDFError
+from app.services.extraction.vision_extractor import render_pdf_pages_to_base64_png
+from app.services.llm.factory import get_llm_provider
 from app.workers.tasks_ingestion import ingest_resume_task
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5MB, enforced server-side (never trust the browser alone)
@@ -61,7 +68,9 @@ async def create_candidate(
     via /candidates/upload if a file is provided at bulk-upload time; this
     endpoint is for the manual-entry path the ATS pipeline actually needs
     today (matching the prototype's Step A)."""
-    existing = await db.execute(select(Candidate).where(Candidate.email == payload.email.lower()))
+    existing = await db.execute(
+        select(Candidate).where(Candidate.email == payload.email.lower(), Candidate.deleted_at.is_(None))
+    )
     if existing.scalar_one_or_none():
         raise HTTPException(400, "A candidate with this email already exists")
 
@@ -72,6 +81,106 @@ async def create_candidate(
     await db.commit()
     await db.refresh(candidate)
     return candidate
+
+
+@router.post("/parse-resume")
+async def parse_resume(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Reads one resume file and returns extracted fields to prefill the
+    'Add candidate' form -- nothing is written to the database here. The
+    file itself is re-uploaded separately when the form is actually saved
+    (create_candidate doesn't accept a file, so the frontend attaches it
+    via PUT /{candidate_id}/resume right after creating the record).
+
+    Runs the same extract_text -> GPT-5 extract_resume steps as the
+    ingestion pipeline, just synchronously and without Celery -- one file,
+    one request, the person is watching the form and waiting on it, so a
+    background task queue would only add latency here, not value.
+
+    A parse failure (corrupt file, no text layer, GPT-5 error) degrades to
+    an empty/best-effort result rather than a 500: the person can still
+    fill the form in by hand, this is a convenience, not a requirement."""
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(400, f"Unsupported file type: {file.filename}")
+
+    contents = await file.read()
+    if len(contents) > MAX_RESUME_BYTES:
+        raise HTTPException(400, f"{file.filename} exceeds the 5MB resume size limit")
+
+    empty_result = {
+        "candidate_name": "", "candidate_email": "", "candidate_phone": "",
+        "current_company": "", "skills": [], "total_experience_years": None,
+        "resume_summary": "", "warning": None,
+    }
+
+    # extract_text/render_pdf_pages_to_base64_png need a real path on disk,
+    # not the bytes -- write to a throwaway temp file rather than a
+    # candidate's permanent upload slot, since no candidate exists yet at
+    # this point.
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=True) as tmp:
+        tmp.write(contents)
+        tmp.flush()
+
+        try:
+            raw_text = extract_text(tmp.name)
+        except ScannedPDFError:
+            # No text layer -- fall back to GPT-5 vision reading the page
+            # images directly, instead of requiring Tesseract/Poppler.
+            try:
+                llm = get_llm_provider()
+                images = render_pdf_pages_to_base64_png(tmp.name)
+                extraction = await llm.extract_resume_from_images(images)
+            except Exception:
+                logger.exception("parse_resume: vision extraction failed for %s", file.filename)
+                return {**empty_result, "warning": "Couldn't read this scanned PDF automatically -- fill in the details manually."}
+            return _parsed_response(extraction, resume_summary=_summarize_extraction(extraction))
+        except Exception:
+            # Logged with the traceback rather than swallowed silently --
+            # this used to be a black hole where "couldn't read text" could
+            # mean several different things. Check the server/worker logs
+            # for this line to see the real cause.
+            logger.exception("parse_resume: extract_text failed for %s", file.filename)
+            return {**empty_result, "warning": "Couldn't read text from this file -- fill in the details manually."}
+
+    if not raw_text or not raw_text.strip():
+        return {**empty_result, "warning": "Couldn't read text from this file -- fill in the details manually."}
+
+    try:
+        llm = get_llm_provider()
+        extraction = await llm.extract_resume(raw_text)
+    except Exception:
+        logger.exception("parse_resume: llm.extract_resume failed for %s", file.filename)
+        return {**empty_result, "warning": "Automatic parsing failed -- fill in the details manually."}
+
+    return _parsed_response(extraction, resume_summary=raw_text.strip()[:600])
+
+
+def _parsed_response(extraction: dict, resume_summary: str) -> dict:
+    return {
+        "candidate_name": extraction.get("candidate_name", ""),
+        "candidate_email": extraction.get("candidate_email", ""),
+        "candidate_phone": extraction.get("candidate_phone", ""),
+        "current_company": extraction.get("current_company", ""),
+        "skills": extraction.get("skills", []),
+        "total_experience_years": extraction.get("total_experience_years"),
+        "resume_summary": resume_summary,
+        "warning": None,
+    }
+
+
+def _summarize_extraction(extraction: dict) -> str:
+    """Builds a short human-readable summary from structured extraction --
+    used in place of raw text when the resume came from vision extraction
+    (a scanned PDF never has extracted text to slice a summary from)."""
+    skills = ", ".join(extraction.get("skills", [])[:10])
+    roles = "; ".join(
+        f"{w.get('role', '')} at {w.get('company', '')}"
+        for w in extraction.get("work_history", [])[:3]
+    )
+    return f"Skills: {skills}\nExperience: {roles}"[:600]
 
 
 @router.post("/upload", response_model=list[CandidateOut])
@@ -128,7 +237,7 @@ async def list_candidates(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = select(Candidate).order_by(Candidate.added_on.desc())
+    query = select(Candidate).where(Candidate.deleted_at.is_(None)).order_by(Candidate.added_on.desc())
     if search:
         q = f"%{search.lower()}%"
         query = query.where(or_(Candidate.name.ilike(q), Candidate.email.ilike(q), Candidate.phone.ilike(q)))
@@ -139,9 +248,22 @@ async def list_candidates(
 @router.get("/{candidate_id}", response_model=CandidateOut)
 async def get_candidate(candidate_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     candidate = await db.get(Candidate, candidate_id)
-    if not candidate:
+    if not candidate or candidate.deleted_at is not None:
         raise HTTPException(404, "Candidate not found")
     return candidate
+
+
+@router.delete("/{candidate_id}", status_code=204)
+async def delete_candidate(candidate_id: uuid.UUID, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Soft delete — candidate_profiles/embeddings/match_results/assessments
+    all point at this row's id and stay intact (audit trail), matching the
+    pattern in companies.py/jobs.py. The resume file on disk is left alone;
+    it's tied to the id, not to whether the candidate record is 'active'."""
+    candidate = await db.get(Candidate, candidate_id)
+    if not candidate or candidate.deleted_at is not None:
+        raise HTTPException(404, "Candidate not found")
+    candidate.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
 
 
 @router.get("/{candidate_id}/resume")

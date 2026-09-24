@@ -1,6 +1,6 @@
-import { useState, FormEvent } from 'react'
+import { useState, FormEvent, ChangeEvent } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listCandidates, createCandidate, uploadCandidateResume } from '../api/candidates'
+import { listCandidates, createCandidate, uploadCandidateResume, parseResume } from '../api/candidates'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
@@ -19,6 +19,15 @@ export default function CandidatesDirectoryPage() {
   const [screeningTarget, setScreeningTarget] = useState<{ assessment: AssessmentScored; jobTitle: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [parsing, setParsing] = useState(false)
+  const [parseWarning, setParseWarning] = useState<string | null>(null)
+  // Prefilled from the resume once parsed; the person can still edit any
+  // field before saving — this only saves them re-typing what's already on
+  // the resume, it never removes their ability to correct it.
+  const [prefill, setPrefill] = useState({
+    name: '', email: '', phone: '', current_company: '',
+    experience_years: '', resume_skills: '', resume_summary: '',
+  })
   const queryClient = useQueryClient()
 
   const { data: candidates, isLoading } = useQuery({
@@ -28,6 +37,30 @@ export default function CandidatesDirectoryPage() {
 
   const createMutation = useMutation({ mutationFn: createCandidate })
   const uploadMutation = useMutation({ mutationFn: ({ id, file }: { id: string; file: File }) => uploadCandidateResume(id, file) })
+
+  async function handleResumeSelected(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setParseWarning(null)
+    setParsing(true)
+    try {
+      const parsed = await parseResume(file)
+      setPrefill((prev) => ({
+        name: parsed.candidate_name || prev.name,
+        email: parsed.candidate_email || prev.email,
+        phone: parsed.candidate_phone || prev.phone,
+        current_company: parsed.current_company || prev.current_company,
+        experience_years: parsed.total_experience_years != null ? String(parsed.total_experience_years) : prev.experience_years,
+        resume_skills: parsed.skills.length > 0 ? parsed.skills.join(', ') : prev.resume_skills,
+        resume_summary: parsed.resume_summary || prev.resume_summary,
+      }))
+      if (parsed.warning) setParseWarning(parsed.warning)
+    } catch {
+      setParseWarning("Couldn't auto-fill from this resume — fill in the details manually.")
+    } finally {
+      setParsing(false)
+    }
+  }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -57,6 +90,8 @@ export default function CandidatesDirectoryPage() {
 
       queryClient.invalidateQueries({ queryKey: ['candidates'] })
       setShowForm(false)
+      setPrefill({ name: '', email: '', phone: '', current_company: '', experience_years: '', resume_skills: '', resume_summary: '' })
+      setParseWarning(null)
       e.currentTarget.reset()
     } catch (err: any) {
       setSubmitError(
@@ -73,7 +108,14 @@ export default function CandidatesDirectoryPage() {
         title="Candidates"
         subtitle="One record per person, independent of any specific role. Click a candidate to see every role they've been assessed against."
         actions={
-          <Button variant={showForm ? 'secondary' : 'primary'} onClick={() => setShowForm((v) => !v)}>
+          <Button
+            variant={showForm ? 'secondary' : 'primary'}
+            onClick={() => {
+              setShowForm((v) => !v)
+              setPrefill({ name: '', email: '', phone: '', current_company: '', experience_years: '', resume_skills: '', resume_summary: '' })
+              setParseWarning(null)
+            }}
+          >
             {showForm ? 'Cancel' : '+ Add one candidate'}
           </Button>
         }
@@ -81,25 +123,48 @@ export default function CandidatesDirectoryPage() {
 
       {showForm && (
         <form className="card" onSubmit={handleSubmit} style={{ marginBottom: 'var(--space-5)' }}>
-          <div className="grid-2">
-            <div className="field"><label>Name</label><input name="name" required /></div>
-            <div className="field"><label>Current company</label><input name="current_company" /></div>
-          </div>
-          <div className="grid-2">
-            <div className="field"><label>Email</label><input name="email" type="email" required /></div>
-            <div className="field"><label>Phone</label><input name="phone" /></div>
-          </div>
-          <div className="grid-2">
-            <div className="field"><label>Experience (yrs)</label><input name="experience_years" type="number" step="0.5" /></div>
-            <div className="field"><label>Skills (comma separated)</label><input name="resume_skills" placeholder="React, TypeScript" /></div>
-          </div>
-          <div className="field"><label>Resume summary</label><textarea name="resume_summary" rows={2} /></div>
           <div className="field">
             <label>Resume (PDF or Word, max 5MB)</label>
-            <input name="resume" type="file" accept=".pdf,.docx" />
+            <input name="resume" type="file" accept=".pdf,.docx" onChange={handleResumeSelected} />
+            {parsing && <p className="muted" style={{ marginTop: 4 }}>Reading resume…</p>}
+            {parseWarning && <p className="muted" style={{ marginTop: 4 }}>{parseWarning}</p>}
+          </div>
+          <div className="grid-2">
+            <div className="field">
+              <label>Name</label>
+              <input name="name" required value={prefill.name} onChange={(e) => setPrefill((p) => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div className="field">
+              <label>Current company</label>
+              <input name="current_company" value={prefill.current_company} onChange={(e) => setPrefill((p) => ({ ...p, current_company: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid-2">
+            <div className="field">
+              <label>Email</label>
+              <input name="email" type="email" required value={prefill.email} onChange={(e) => setPrefill((p) => ({ ...p, email: e.target.value }))} />
+            </div>
+            <div className="field">
+              <label>Phone</label>
+              <input name="phone" value={prefill.phone} onChange={(e) => setPrefill((p) => ({ ...p, phone: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid-2">
+            <div className="field">
+              <label>Experience (yrs)</label>
+              <input name="experience_years" type="number" step="0.5" value={prefill.experience_years} onChange={(e) => setPrefill((p) => ({ ...p, experience_years: e.target.value }))} />
+            </div>
+            <div className="field">
+              <label>Skills (comma separated)</label>
+              <input name="resume_skills" placeholder="React, TypeScript" value={prefill.resume_skills} onChange={(e) => setPrefill((p) => ({ ...p, resume_skills: e.target.value }))} />
+            </div>
+          </div>
+          <div className="field">
+            <label>Resume summary</label>
+            <textarea name="resume_summary" rows={2} value={prefill.resume_summary} onChange={(e) => setPrefill((p) => ({ ...p, resume_summary: e.target.value }))} />
           </div>
           {submitError && <p className="error-text" role="alert">{submitError}</p>}
-          <Button type="submit" loading={submitting}>
+          <Button type="submit" loading={submitting} disabled={parsing}>
             {submitting ? 'Saving...' : 'Save candidate'}
           </Button>
         </form>

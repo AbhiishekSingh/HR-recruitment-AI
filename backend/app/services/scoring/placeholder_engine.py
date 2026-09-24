@@ -1,19 +1,18 @@
 """
-PLACEHOLDER scoring engine.
+Scoring engine for the ATS pipeline.
 
-This is a direct, deliberate port of the prototype's scoring.js logic — same
-math, same weights, same hard-filter rules — so the ATS foundation is fully
-real and working end-to-end right now, without waiting on the real AI work.
+The real GPT-5 matching pipeline (services/llm/, services/embeddings/,
+services/search/hybrid_search.py, workers/tasks_matching.py) writes its
+results into `match_results`. `compute_final_score()` now reads that table
+first — pass in the MatchResult row for this (job, candidate) pair as
+`match_result` and it's used directly, with a sanity check against the LLM's
+own stated matched/missing skills.
 
-Everything under `ai_match_score()` below is a temporary stand-in for the
-real pipeline that already exists elsewhere in this backend (GPT-5 structured
-extraction + embeddings + hybrid search + GPT-5 scoring — see
-services/llm/, services/embeddings/, services/search/hybrid_search.py).
-
-When that pipeline is wired into this ATS flow, only `ai_match_score()` needs
-to be replaced with a real lookup into `match_results` — nothing else in this
-file, or in the assessment/job endpoints that call it, needs to change,
-because the interface (a 0-100 score + matched/missing skills) stays the same.
+`ai_match_score()` (pure keyword overlap + experience-band fit) is kept only
+as a fallback for the window before the AI pipeline has scored a given pair
+yet (job just created, matching not run, or this candidate wasn't in the
+top-K). It's flagged as an estimate whenever it's used, so a recruiter never
+mistakes it for a real GPT-5 score.
 """
 
 ENUM_MAPS = {
@@ -41,11 +40,57 @@ def _enum_score(map_name: str, value: str) -> int:
     return ENUM_MAPS[map_name].get(value, 0)
 
 
+def _from_match_result(match_result) -> dict:
+    """Adapts a MatchResult ORM row (the real GPT-5 pipeline's output) into
+    the same shape ai_match_score() returns, so nothing downstream has to
+    know which source produced it."""
+    return {
+        "score": match_result.score,
+        "matched_skills": match_result.matched_skills or [],
+        "missing_skills": match_result.missing_skills or [],
+        "strengths": match_result.strengths or [],
+        "gaps": match_result.gaps or [],
+        "recommendation": match_result.recommendation,
+        "model_version": match_result.model_version,
+        "scored_at": match_result.scored_at,
+        "source": "ai_pipeline",
+    }
+
+
+def sanity_check_ai_score(ai: dict) -> list[dict]:
+    """Cheap, non-LLM check that the GPT-5 score roughly agrees with the
+    matched/missing skill lists it returned alongside it. Never blocks or
+    overrides anything — it only surfaces a flag for the recruiter to glance
+    at, since the human always makes the final call (see final_status /
+    compute_final_score's hard_reject logic)."""
+    if ai.get("source") != "ai_pipeline":
+        return []
+
+    matched = len(ai.get("matched_skills") or [])
+    missing = len(ai.get("missing_skills") or [])
+    total = matched + missing
+    if total == 0:
+        return []
+
+    coverage = matched / total
+    score = ai.get("score", 0)
+    # A high score with mostly-missing skills, or a low score with
+    # mostly-matched skills, means the LLM's number and its own stated
+    # reasoning disagree — worth a human glance, not an auto-correction.
+    if score >= 70 and coverage < 0.4:
+        return [{"level": "warn", "text": f"AI score ({score}) is high but only {matched}/{total} required skills matched — worth a second look."}]
+    if score <= 40 and coverage > 0.75:
+        return [{"level": "warn", "text": f"AI score ({score}) is low despite {matched}/{total} required skills matched — worth a second look."}]
+    return []
+
+
 def ai_match_score(job_skills: list[str], candidate_skills: list[str],
                     candidate_experience_years: float, exp_min: float, exp_max: float) -> dict:
-    """PLACEHOLDER — pure keyword overlap + experience-band fit.
-    Replace with a real match_results lookup once the GPT-5 pipeline is wired
-    into this flow. Interface (score/matched/missing) is deliberately stable."""
+    """FALLBACK ONLY — pure keyword overlap + experience-band fit, used only
+    when no MatchResult exists yet for this (job, candidate) pair (AI
+    pipeline hasn't run, or this candidate wasn't in the pre-filtered
+    top-K). Interface (score/matched/missing) matches _from_match_result()
+    so callers don't need to branch on which one they got."""
     job_skills_norm = [s.strip().lower() for s in job_skills]
     cand_skills_norm = [s.strip().lower() for s in candidate_skills]
 
@@ -53,7 +98,17 @@ def ai_match_score(job_skills: list[str], candidate_skills: list[str],
     missing = [s for s in job_skills if s.strip().lower() not in cand_skills_norm]
     skill_coverage = (len(matched) / len(job_skills)) if job_skills else 0
 
-    if exp_min <= candidate_experience_years <= exp_max:
+    candidate_experience_years = candidate_experience_years or 0
+
+    if exp_min == 0 and exp_max == 0:
+        # JobPosting.experience_min/max default to 0/0 when a recruiter
+        # hasn't set an experience range yet. Without this guard, the "over"
+        # branch below treats that as "the job wants 0 years" and penalizes
+        # every experienced candidate down to a floor of 0.5 — the opposite
+        # of what an unset range should mean. Unset = no experience
+        # requirement, so it's a full fit regardless of years.
+        exp_fit = 1.0
+    elif exp_min <= candidate_experience_years <= exp_max:
         exp_fit = 1.0
     elif candidate_experience_years < exp_min:
         gap = exp_min - candidate_experience_years
@@ -69,6 +124,7 @@ def ai_match_score(job_skills: list[str], candidate_skills: list[str],
         "missing_skills": missing,
         "skill_coverage": round(skill_coverage * 100),
         "experience_fit": round(exp_fit * 100),
+        "source": "estimate",
     }
 
 
@@ -111,23 +167,71 @@ def apply_hard_filters(job, a) -> dict:
     return {"flags": flags, "hard_reject": hard_reject}
 
 
-def compute_final_score(job, candidate, a) -> dict:
-    """job = JobPosting ORM row, candidate = Candidate ORM row, a = Assessment ORM row."""
-    ai = ai_match_score(
-        job.required_skills, candidate.resume_skills,
-        candidate.experience_years, job.experience_min, job.experience_max,
-    )
+def compute_final_score(job, candidate, a, match_result=None, candidate_profile=None) -> dict:
+    """job = JobPosting ORM row, candidate = Candidate ORM row, a = Assessment
+    ORM row, match_result = MatchResult ORM row for this (job, candidate)
+    pair if the AI pipeline has scored it, else None. candidate_profile =
+    CandidateProfile ORM row (the GPT-5 extracted skills/experience) if
+    ingestion has completed for this candidate, else None.
+
+    AI involvement stops at `ai` below — score/matched/missing skills only.
+    Nothing here lets the AI set final_status or bucket on its own; that
+    stays a human decision (see apply_hard_filters/final_status handling)."""
+    if match_result is not None:
+        ai = _from_match_result(match_result)
+    else:
+        # AI pipeline hasn't scored this (job, candidate) pair yet — use the
+        # cheap keyword-overlap estimate so the pipeline view isn't blank,
+        # clearly flagged as such below.
+        #
+        # Prefer CandidateProfile (skills/experience GPT-5 actually
+        # extracted from the resume) over Candidate.resume_skills/
+        # experience_years. Those Candidate-level fields are what a bulk
+        # resume upload or the ingestion pipeline populate; a candidate
+        # uploaded that way never has resume_skills/experience_years set on
+        # the Candidate row itself, so estimating from those fields for
+        # anyone who came in through the ATS's own upload flow means the
+        # skill/experience match is silently computed against empty data
+        # (0 skills, 0 years) even once the real resume has been parsed.
+        # Candidate.resume_skills/experience_years are only the right
+        # source for a candidate manually entered with no resume at all.
+        if candidate_profile is not None:
+            skills_source = candidate_profile.skills or []
+            experience_source = candidate_profile.total_experience_years or 0
+        else:
+            skills_source = candidate.resume_skills
+            experience_source = candidate.experience_years
+
+        ai = ai_match_score(
+            job.required_skills, skills_source,
+            experience_source, job.experience_min, job.experience_max,
+        )
+
+    ai_flags = sanity_check_ai_score(ai)
+    if ai.get("source") == "estimate":
+        if candidate.status in ("queued", "extracting", "embedding"):
+            # The resume upload itself hasn't finished processing yet -- a
+            # 0-skills estimate here means "no data yet", not "no match".
+            # Without this, a recruiter has no way to tell those apart from
+            # the pipeline view alone.
+            ai_flags.append({"level": "info", "text": f"Resume is still processing ({candidate.status}) — skill/experience match will update once extraction finishes."})
+        elif candidate.status == "needs_review":
+            ai_flags.append({"level": "warn", "text": "Resume text extraction failed — this candidate needs manual review before an AI estimate is meaningful."})
+        elif candidate.status == "failed":
+            ai_flags.append({"level": "warn", "text": "Resume processing failed after retries — this candidate needs manual review."})
+        else:
+            ai_flags.append({"level": "info", "text": "AI score is a rough estimate — GPT-5 matching hasn't run for this candidate/job pair yet."})
 
     if not a.screened:
         return {
             "ai": ai, "assessment": None,
-            "flags": [{"level": "warn", "text": "Awaiting recruiter screening — no assessment on file yet."}],
+            "flags": ai_flags + [{"level": "warn", "text": "Awaiting recruiter screening — no assessment on file yet."}],
             "hard_reject": False, "adjustments": [], "final": None, "bucket": "pending",
         }
 
     assessment = assessment_score(a)
     filt = apply_hard_filters(job, a)
-    flags, hard_reject = filt["flags"], filt["hard_reject"]
+    flags, hard_reject = ai_flags + filt["flags"], filt["hard_reject"]
 
     final = FINAL_WEIGHTS["ai"] * ai["score"] + FINAL_WEIGHTS["assessment"] * assessment["score"]
     adjustments = []

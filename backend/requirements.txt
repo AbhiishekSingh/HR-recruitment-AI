@@ -19,8 +19,14 @@ redis==5.0.8
 # File parsing
 pdfplumber==0.11.4
 python-docx==1.1.2
-pytesseract==0.3.13
-pdf2image==1.17.0
+# Renders scanned/image-only PDF pages to PNGs for GPT-5 vision extraction.
+# Replaces pytesseract/pdf2image (removed) -- those needed the Tesseract and
+# Poppler SYSTEM binaries installed separately (not pip-installable, and not
+# present by default on Windows), which is what caused "couldn't read text"
+# for any resume that wasn't a clean text-layer PDF. PyMuPDF ships its
+# rendering engine inside the wheel itself, so `pip install` alone is enough
+# on any OS.
+pymupdf==1.24.11
 
 # LLM / embeddings
 openai==1.51.0

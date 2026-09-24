@@ -72,7 +72,13 @@ class AssessmentScored(AssessmentOut):
     candidate_email: str
     candidate_experience_years: float
     candidate_current_company: str
+    candidate_status: str  # queued | extracting | embedding | ready | failed | needs_review
     ai_score: int | None = None
+    # "ai_pipeline" = a real GPT-5 MatchResult was found for this pair;
+    # "estimate" = matching hasn't run yet and this is the cheap keyword-
+    # overlap fallback. Lets the frontend label the score honestly instead
+    # of parsing the "rough estimate" text out of `flags`.
+    ai_source: str | None = None
     matched_skills: list[str] = []
     missing_skills: list[str] = []
     assessment_score: int | None = None

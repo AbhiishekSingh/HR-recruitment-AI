@@ -172,6 +172,12 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
 }) {
   const a = assessment
   const isPending = a.bucket === 'pending'
+  // "warn"-level flags only (the sanity-check mismatch, hard-filter
+  // breaches) -- "info" (the estimate notice) is already conveyed by the
+  // score caption below, so surfacing it again in the icon would be noise.
+  const warnFlags = a.flags.filter((f) => f.level === 'warn')
+  const isProcessing = ['queued', 'extracting', 'embedding'].includes(a.candidate_status)
+  const extractionFailed = ['needs_review', 'failed'].includes(a.candidate_status)
 
   return (
     <tr>
@@ -183,10 +189,42 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
         <div className="muted">{a.candidate_email}</div>
       </td>
       <td>
-        {isPending ? (
-          <><strong>{a.ai_score}</strong><div className="muted" style={{ fontSize: 11 }}>AI fit only</div></>
+        {isProcessing ? (
+          <div className="muted score-caption">Resume processing ({a.candidate_status})…</div>
+        ) : extractionFailed ? (
+          <div className="score-cell">
+            <span className="score-flag" title="Resume text couldn't be extracted — check the file and re-upload, or fill in manually.">⚠</span>
+            <span className="muted score-caption">Needs review — extraction failed</span>
+          </div>
         ) : (
-          <strong>{a.final_score}</strong>
+          <>
+            <div className="score-cell">
+              {isPending ? (
+                <strong>{a.ai_score}</strong>
+              ) : (
+                <strong>{a.final_score}</strong>
+              )}
+              {warnFlags.length > 0 && (
+                <span className="score-flag" title={warnFlags.map((f) => f.text).join('\n')}>⚠</span>
+              )}
+            </div>
+            <div className="muted score-caption">
+              {isPending
+                ? a.ai_source === 'estimate' ? 'AI fit — estimate only' : 'AI fit only'
+                : 'Final (AI + assessment)'}
+            </div>
+            {(a.matched_skills.length > 0 || a.missing_skills.length > 0) && (
+              <div
+                className="muted score-caption"
+                title={
+                  `Matched: ${a.matched_skills.join(', ') || '—'}\n` +
+                  `Missing: ${a.missing_skills.join(', ') || '—'}`
+                }
+              >
+                {a.matched_skills.length}/{a.matched_skills.length + a.missing_skills.length} skills matched
+              </div>
+            )}
+          </>
         )}
       </td>
       <td className="muted">{a.candidate_experience_years} yrs</td>

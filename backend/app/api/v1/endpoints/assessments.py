@@ -8,7 +8,9 @@ from pydantic import BaseModel
 from app.api.deps import get_db, get_current_user
 from app.models.assessment import Assessment
 from app.models.candidate import Candidate
+from app.models.candidate_profile import CandidateProfile
 from app.models.job_posting import JobPosting
+from app.models.match_result import MatchResult
 from app.models.user import User
 from app.schemas.assessment import AssessmentCreate, AssessmentScored, ClientFeedbackUpdate
 from app.services.scoring.placeholder_engine import compute_final_score
@@ -16,8 +18,21 @@ from app.services.scoring.placeholder_engine import compute_final_score
 router = APIRouter()
 
 
-def _to_scored(assessment: Assessment, candidate: Candidate, job: JobPosting) -> dict:
-    result = compute_final_score(job, candidate, assessment)
+async def _get_match_result(db: AsyncSession, job_id: uuid.UUID, candidate_id: uuid.UUID) -> MatchResult | None:
+    result = await db.execute(
+        select(MatchResult).where(MatchResult.job_id == job_id, MatchResult.candidate_id == candidate_id)
+    )
+    return result.scalar_one_or_none()
+
+
+def _to_scored(
+    assessment: Assessment,
+    candidate: Candidate,
+    job: JobPosting,
+    match_result: MatchResult | None = None,
+    candidate_profile: CandidateProfile | None = None,
+) -> dict:
+    result = compute_final_score(job, candidate, assessment, match_result, candidate_profile)
     return {
         **{c.name: getattr(assessment, c.name) for c in assessment.__table__.columns},
         # Carried over from the related Candidate row (already loaded by the
@@ -26,7 +41,9 @@ def _to_scored(assessment: Assessment, candidate: Candidate, job: JobPosting) ->
         "candidate_email": candidate.email,
         "candidate_experience_years": candidate.experience_years,
         "candidate_current_company": candidate.current_company,
+        "candidate_status": candidate.status,
         "ai_score": result["ai"]["score"],
+        "ai_source": result["ai"].get("source"),
         "matched_skills": result["ai"]["matched_skills"],
         "missing_skills": result["ai"]["missing_skills"],
         "assessment_score": result["assessment"]["score"] if result["assessment"] else None,
@@ -56,11 +73,36 @@ async def get_job_pipeline(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)
         cand_result = await db.execute(select(Candidate).where(Candidate.id.in_(candidate_ids)))
         candidates_by_id = {c.id: c for c in cand_result.scalars().all()}
 
+    # Batch-fetch every MatchResult this pipeline needs in one query too —
+    # same N+1 concern as the candidate fetch above, since this job may have
+    # dozens of AI-scored pairs.
+    match_results_by_candidate: dict[uuid.UUID, MatchResult] = {}
+    if candidate_ids:
+        mr_result = await db.execute(
+            select(MatchResult).where(MatchResult.job_id == job_id, MatchResult.candidate_id.in_(candidate_ids))
+        )
+        match_results_by_candidate = {mr.candidate_id: mr for mr in mr_result.scalars().all()}
+
+    # Batch-fetch every CandidateProfile too — this is what the fallback
+    # estimate should be reading skills/experience from (see
+    # compute_final_score), not Candidate.resume_skills/experience_years,
+    # which bulk upload / ingestion never populate.
+    profiles_by_candidate: dict[uuid.UUID, CandidateProfile] = {}
+    if candidate_ids:
+        profile_result = await db.execute(
+            select(CandidateProfile).where(CandidateProfile.candidate_id.in_(candidate_ids))
+        )
+        profiles_by_candidate = {p.candidate_id: p for p in profile_result.scalars().all()}
+
     scored = []
     for a in assessments:
         candidate = candidates_by_id.get(a.candidate_id)
         if candidate:
-            scored.append(_to_scored(a, candidate, job))
+            scored.append(_to_scored(
+                a, candidate, job,
+                match_results_by_candidate.get(a.candidate_id),
+                profiles_by_candidate.get(a.candidate_id),
+            ))
 
     # Pending rows first (nothing waiting on screening gets buried), then by final score desc.
     scored.sort(key=lambda s: (0 if s["bucket"] == "pending" else 1, -(s["final_score"] or 0)))
@@ -78,11 +120,16 @@ async def get_candidate_assessments(candidate_id: uuid.UUID, db: AsyncSession = 
     result = await db.execute(select(Assessment).where(Assessment.candidate_id == candidate_id))
     assessments = result.scalars().all()
 
+    # Same candidate across every row here, so one profile fetch covers all
+    # of them (unlike match_result, which varies per job).
+    candidate_profile = await db.get(CandidateProfile, candidate_id)
+
     scored = []
     for a in assessments:
         job = await db.get(JobPosting, a.job_id)
         if job:
-            scored.append(_to_scored(a, candidate, job))
+            match_result = await _get_match_result(db, a.job_id, candidate_id)
+            scored.append(_to_scored(a, candidate, job, match_result, candidate_profile))
     return scored
 
 
@@ -117,7 +164,9 @@ async def start_or_get_assessment(
         await db.commit()
         await db.refresh(assessment)
 
-    return _to_scored(assessment, candidate, job)
+    match_result = await _get_match_result(db, payload.job_id, payload.candidate_id)
+    candidate_profile = await db.get(CandidateProfile, payload.candidate_id)
+    return _to_scored(assessment, candidate, job, match_result, candidate_profile)
 
 
 @router.patch("/assessments/{assessment_id}", response_model=AssessmentScored)
@@ -144,7 +193,9 @@ async def submit_screening(
 
     candidate = await db.get(Candidate, assessment.candidate_id)
     job = await db.get(JobPosting, assessment.job_id)
-    return _to_scored(assessment, candidate, job)
+    match_result = await _get_match_result(db, assessment.job_id, assessment.candidate_id)
+    candidate_profile = await db.get(CandidateProfile, assessment.candidate_id)
+    return _to_scored(assessment, candidate, job, match_result, candidate_profile)
 
 
 class StatusUpdate(BaseModel):
@@ -167,7 +218,9 @@ async def set_status(
 
     candidate = await db.get(Candidate, assessment.candidate_id)
     job = await db.get(JobPosting, assessment.job_id)
-    return _to_scored(assessment, candidate, job)
+    match_result = await _get_match_result(db, assessment.job_id, assessment.candidate_id)
+    candidate_profile = await db.get(CandidateProfile, assessment.candidate_id)
+    return _to_scored(assessment, candidate, job, match_result, candidate_profile)
 
 
 class SendToClientRequest(BaseModel):
@@ -209,4 +262,6 @@ async def client_feedback(
 
     candidate = await db.get(Candidate, assessment.candidate_id)
     job = await db.get(JobPosting, assessment.job_id)
-    return _to_scored(assessment, candidate, job)
+    match_result = await _get_match_result(db, assessment.job_id, assessment.candidate_id)
+    candidate_profile = await db.get(CandidateProfile, assessment.candidate_id)
+    return _to_scored(assessment, candidate, job, match_result, candidate_profile)

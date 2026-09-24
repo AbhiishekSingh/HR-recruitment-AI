@@ -1,36 +1,92 @@
 import json
 
+import openai
 from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
 from app.services.llm.base import LLMProvider
 from app.services.llm.prompts.jd_extraction import build_jd_extraction_prompt
-from app.services.llm.prompts.resume_extraction import build_resume_extraction_prompt
+from app.services.llm.prompts.resume_extraction import build_resume_extraction_prompt, build_resume_vision_prompt
 from app.services.llm.prompts.candidate_scoring import build_scoring_prompt
+from app.services.llm.validation import coerce_jd_extraction, coerce_resume_extraction, coerce_score_result
+
+# Client-side timeout per call. Without this, a hung connection (bad network,
+# OpenAI-side stall) blocks the Celery worker on this one candidate/JD
+# indefinitely instead of failing and letting the retry/backoff logic below
+# take over.
+REQUEST_TIMEOUT_SECONDS = 60
+
+# Only retry errors that can plausibly succeed on a second attempt: rate
+# limits, transient connection issues, server-side 5xx, and malformed JSON in
+# the response. Retrying AuthenticationError/PermissionDeniedError/
+# BadRequestError is pure waste -- a bad API key or an invalid request will
+# fail identically every time, so without this filter every such call was
+# burning the full 3-attempt exponential backoff (~20+ seconds) before
+# surfacing the real error.
+RETRYABLE_ERRORS = (
+    openai.RateLimitError,
+    openai.APIConnectionError,
+    openai.APITimeoutError,
+    openai.InternalServerError,
+    json.JSONDecodeError,
+)
 
 
 class GPT5Provider(LLMProvider):
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        if not settings.openai_api_key:
+            # Fail loudly and immediately at construction time (e.g. when a
+            # Celery task first calls get_llm_provider()) rather than a
+            # confusing 401 from the OpenAI SDK three retries deep into the
+            # first real request.
+            raise RuntimeError(
+                "OPENAI_API_KEY is not set -- the GPT-5 matching/extraction "
+                "pipeline cannot run without it. Set it in the backend's .env."
+            )
+        self.client = AsyncOpenAI(api_key=settings.openai_api_key, timeout=REQUEST_TIMEOUT_SECONDS)
         self.model = settings.llm_model_name
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=20))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=20),
+        retry=retry_if_exception_type(RETRYABLE_ERRORS),
+        reraise=True,
+    )
     async def _call(self, messages: list[dict]) -> dict:
+        # No `temperature` param: GPT-5 (like the o-series reasoning models
+        # before it) only accepts the API default and rejects any explicit
+        # value -- including 0 -- with a 400 BadRequestError on every call.
+        # Determinism for extraction/scoring comes from the prompt being
+        # fully structured + response_format=json_object, not from pinning
+        # temperature.
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             response_format={"type": "json_object"},
-            temperature=0,
         )
-        content = response.choices[0].message.content
+        # A content-filtered or empty response comes back as None here, not
+        # an exception -- treat it the same as malformed JSON so it goes
+        # through the same retryable path instead of raising an unfiltered
+        # TypeError from json.loads(None).
+        content = response.choices[0].message.content or ""
         return json.loads(content)  # raises on malformed JSON -> triggers retry
 
     async def extract_jd(self, jd_text: str) -> dict:
-        return await self._call(build_jd_extraction_prompt(jd_text))
+        # Coerced before returning: response_format=json_object only
+        # guarantees valid JSON syntax, not that every key is present or
+        # correctly typed. See services/llm/validation.py.
+        raw = await self._call(build_jd_extraction_prompt(jd_text))
+        return coerce_jd_extraction(raw)
 
     async def extract_resume(self, resume_text: str) -> dict:
-        return await self._call(build_resume_extraction_prompt(resume_text))
+        raw = await self._call(build_resume_extraction_prompt(resume_text))
+        return coerce_resume_extraction(raw)
+
+    async def extract_resume_from_images(self, images_b64: list[str]) -> dict:
+        raw = await self._call(build_resume_vision_prompt(images_b64))
+        return coerce_resume_extraction(raw)
 
     async def score_candidate(self, jd_requirements: dict, candidate_profile: dict) -> dict:
-        return await self._call(build_scoring_prompt(jd_requirements, candidate_profile))
+        raw = await self._call(build_scoring_prompt(jd_requirements, candidate_profile))
+        return coerce_score_result(raw)

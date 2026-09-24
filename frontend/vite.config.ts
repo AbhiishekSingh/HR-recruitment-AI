@@ -8,7 +8,7 @@ export default defineConfig({
     proxy: {
       // Avoids CORS during local dev: calls to /api/* go straight to FastAPI.
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8010',
         changeOrigin: true,
       },
     },

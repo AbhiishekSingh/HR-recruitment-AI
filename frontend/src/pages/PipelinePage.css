@@ -11,6 +11,24 @@
   vertical-align: middle;
 }
 
+.score-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 6px);
+}
+
+.score-flag {
+  cursor: default;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--color-warning, #b45309);
+}
+
+.score-caption {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 @media (min-width: 600px) {
   .pipeline-page { padding: var(--space-6) 0; }
 }

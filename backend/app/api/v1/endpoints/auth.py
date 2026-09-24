@@ -14,13 +14,18 @@ router = APIRouter()
 
 @router.post("/register", response_model=UserOut)
 async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(select(User).where(User.email == payload.email))
+    # Lowercased before the lookup and the insert -- without this,
+    # "Foo@Bar.com" and "foo@bar.com" register as two different accounts,
+    # and neither can log in with the other's casing. Matches the same
+    # normalization candidates.py already applies to Candidate.email.
+    email = payload.email.strip().lower()
+    existing = await db.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(400, "Email already registered")
 
     user = User(
         name=payload.name,
-        email=payload.email,
+        email=email,
         hashed_password=hash_password(payload.password),
         role="recruiter",  # admins are promoted manually, not self-assigned at signup
     )
@@ -34,7 +39,7 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     """OAuth2PasswordRequestForm expects 'username' (we use it as email) + 'password',
     sent as form data — this is what makes Swagger UI's Authorize button work out of the box."""
-    result = await db.execute(select(User).where(User.email == form_data.username))
+    result = await db.execute(select(User).where(User.email == form_data.username.strip().lower()))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(form_data.password, user.hashed_password):
