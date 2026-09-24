@@ -112,13 +112,25 @@ export default function ScreeningFormModal({ assessment, jobTitle, onClose, onSa
 
         <form className="screening-form" onSubmit={handleSubmit}>
           <AccordionSection title="Basic Details" defaultOpen>
-            <div className="field">
-              <label>Candidate Name</label>
-              <input value={assessment.candidate_name} disabled />
+            <div className="grid-2">
+              <div className="field">
+                <label>Candidate Name</label>
+                <input value={assessment.candidate_name} disabled />
+              </div>
+              <div className="field">
+                <label>Contact Number</label>
+                <input value={assessment.candidate_phone || '—'} disabled />
+              </div>
             </div>
+            <div className="grid-2">
             <div className="field">
               <label>Position Applied For</label>
               <input value={jobTitle} disabled />
+            </div>
+            <div className="field">
+              <label>Notice Period (days)</label>
+              <input type="number" value={form.notice_period_days ?? ''} onChange={(e) => set('notice_period_days', e.target.value ? Number(e.target.value) : null)} />
+            </div>
             </div>
             <div className="grid-2">
               <div className="field">
@@ -140,10 +152,7 @@ export default function ScreeningFormModal({ assessment, jobTitle, onClose, onSa
                 <input type="number" value={form.expected_ctc ?? ''} onChange={(e) => set('expected_ctc', e.target.value ? Number(e.target.value) : null)} />
               </div>
             </div>
-            <div className="field">
-              <label>Notice Period (days)</label>
-              <input type="number" value={form.notice_period_days ?? ''} onChange={(e) => set('notice_period_days', e.target.value ? Number(e.target.value) : null)} />
-            </div>
+            
             <div className="grid-2">
               <div className="field">
                 <label>Current Location</label>

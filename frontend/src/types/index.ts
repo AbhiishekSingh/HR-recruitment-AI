@@ -54,8 +54,10 @@ export interface AssessmentScored {
   // just to label a row.
   candidate_name: string
   candidate_email: string
+  candidate_phone: string
   candidate_experience_years: number
   candidate_current_company: string
+  candidate_file_path: string | null
   candidate_status: string // queued | extracting | embedding | ready | failed | needs_review
   job_id: string
   current_ctc: number | null

@@ -70,9 +70,12 @@ class AssessmentScored(AssessmentOut):
     # make a second /candidates call just to label a pipeline/assessment row.
     candidate_name: str
     candidate_email: str
+    candidate_phone: str = ""
     candidate_experience_years: float
     candidate_current_company: str
-    candidate_status: str | None = None  # queued | extracting | embedding | ready | failed | needs_review
+    # Lets the pipeline table offer a "View resume" action per row without a
+    # second /candidates/{id} call just to check whether a file exists.
+    candidate_file_path: str | None = None
     ai_score: int | None = None
     # "ai_pipeline" = a real GPT-5 MatchResult was found for this pair;
     # "estimate" = matching hasn't run yet and this is the cheap keyword-

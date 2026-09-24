@@ -39,9 +39,11 @@ def _to_scored(
         # caller) so the frontend gets a display-ready row in one response.
         "candidate_name": candidate.name,
         "candidate_email": candidate.email,
+        "candidate_phone": candidate.phone,
         "candidate_experience_years": candidate.experience_years,
         "candidate_current_company": candidate.current_company,
         "candidate_status": candidate.status,
+        "candidate_file_path": candidate.file_path,
         "ai_score": result["ai"]["score"],
         "ai_source": result["ai"].get("source"),
         "matched_skills": result["ai"]["matched_skills"],

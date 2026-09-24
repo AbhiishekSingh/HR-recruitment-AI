@@ -51,8 +51,10 @@ export async function deleteCandidateResume(candidateId: string): Promise<Candid
 /** Downloads the resume as a Blob and triggers the browser's normal
  *  save/open behavior — done as an authenticated fetch (not a plain <a
  *  href>) because the endpoint requires the JWT bearer token like every
- *  other API call. */
-export async function viewCandidateResume(candidate: Candidate): Promise<void> {
+ *  other API call. Takes just the fields it needs (id/name/file_path) so
+ *  callers that only have a pipeline/assessment row — not a full Candidate
+ *  — can reuse it without an extra fetch. */
+export async function viewCandidateResume(candidate: Pick<Candidate, 'id' | 'name' | 'file_path'>): Promise<void> {
   const { data } = await client.get(`/candidates/${candidate.id}/resume`, { responseType: 'blob' })
   const ext = candidate.file_path?.split('.').pop() || 'pdf'
   const filename = `${candidate.name.replace(/\s+/g, '_')}.${ext}`

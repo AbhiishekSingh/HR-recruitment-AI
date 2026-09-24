@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getJob } from '../api/jobs'
-import { bulkUploadResumes, listCandidates } from '../api/candidates'
+import { bulkUploadResumes, listCandidates, viewCandidateResume } from '../api/candidates'
 import { getJobPipeline, startAssessment, sendToClient } from '../api/assessments'
 import { BUCKET_LABELS } from '../types'
 import type { AssessmentScored } from '../types'
@@ -115,6 +115,7 @@ export default function PipelinePage() {
                   <th>Candidate</th>
                   <th>Score</th>
                   <th>Experience</th>
+                  <th>Resume</th>
                   <th>Status</th>
                   <th></th>
                 </tr>
@@ -178,6 +179,21 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
   const warnFlags = a.flags.filter((f) => f.level === 'warn')
   const isProcessing = ['queued', 'extracting', 'embedding'].includes(a.candidate_status)
   const extractionFailed = ['needs_review', 'failed'].includes(a.candidate_status)
+  const hasResume = !!a.candidate_file_path
+  const [viewing, setViewing] = useState(false)
+  const [viewError, setViewError] = useState(false)
+
+  async function handleViewResume() {
+    setViewError(false)
+    setViewing(true)
+    try {
+      await viewCandidateResume({ id: a.candidate_id, name: a.candidate_name, file_path: a.candidate_file_path })
+    } catch {
+      setViewError(true)
+    } finally {
+      setViewing(false)
+    }
+  }
 
   return (
     <tr>
@@ -228,6 +244,18 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
         )}
       </td>
       <td className="muted">{a.candidate_experience_years} yrs</td>
+      <td>
+        {hasResume ? (
+          <>
+            <Button variant="secondary" size="sm" onClick={handleViewResume} loading={viewing}>
+              {viewing ? 'Opening...' : 'View resume'}
+            </Button>
+            {viewError && <div className="muted" style={{ fontSize: 11, color: 'var(--color-danger, #c0392b)' }}>Couldn't open file</div>}
+          </>
+        ) : (
+          <span className="muted">No resume</span>
+        )}
+      </td>
       <td>
         <Badge variant={
           a.bucket === 'strong' || a.bucket === 'good' ? 'shortlist' :

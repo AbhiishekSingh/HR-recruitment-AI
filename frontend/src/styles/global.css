@@ -172,6 +172,19 @@ img {
   color: var(--color-text-faint);
 }
 
+/* Remove the number input up/down spinner everywhere in the app (Chrome,
+   Safari, Edge use the webkit pseudo-elements; Firefox uses -moz-appearance).
+   Typing/scrolling over a number field no longer shows or nudges a spinner. */
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 /* --- Cards --- */
 .card {
   background: var(--color-surface);
