@@ -101,7 +101,7 @@ async def _ingest_resume(candidate_id: str, file_path: str):
                 education=extraction.get("education", []),
                 certifications=extraction.get("certifications", []),
                 total_experience_years=extraction.get("total_experience_years"),
-                extraction_model_version=llm.model,
+                extraction_model_version=llm.extraction_model,
             )
             await db.merge(profile)
         elif existing_profile and existing_profile.raw_text == raw_text:
@@ -136,7 +136,7 @@ async def _ingest_resume(candidate_id: str, file_path: str):
                 education=extraction.get("education", []),
                 certifications=extraction.get("certifications", []),
                 total_experience_years=extraction.get("total_experience_years"),
-                extraction_model_version=llm.model,
+                extraction_model_version=llm.extraction_model,
             )
             await db.merge(profile)
 

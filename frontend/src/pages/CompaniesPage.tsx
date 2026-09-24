@@ -1,7 +1,7 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listCompanies, createCompany } from '../api/companies'
+import { listCompanies, createCompany, viewCompanyDocument } from '../api/companies'
 import { listJobs, createJob } from '../api/jobs'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
@@ -38,12 +38,15 @@ export default function CompaniesPage() {
   function handleCompanySubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
+    const documentFile = fd.get('document') as File | null
     companyMutation.mutate({
       name: String(fd.get('name')),
       industry: String(fd.get('industry')),
       contact_name: String(fd.get('contact_name')),
       contact_email: String(fd.get('contact_email')),
-      tier: String(fd.get('tier')),
+      gst_number: String(fd.get('gst_number')),
+      tier: String(fd.get('tier') || 'Standard'),
+      document: documentFile && documentFile.size > 0 ? documentFile : null,
     })
   }
 
@@ -77,10 +80,15 @@ export default function CompaniesPage() {
 
       {showCompanyForm && (
         <form className="card" onSubmit={handleCompanySubmit} style={{ marginBottom: 'var(--space-5)' }}>
+          <div className="field">
+            <label>Company details document (PDF or Word, max 5MB)</label>
+            <input name="document" type="file" accept=".pdf,.doc,.docx" />
+          </div>
           <div className="field"><label>Company name</label><input name="name" required /></div>
           <div className="field"><label>Industry</label><input name="industry" /></div>
           <div className="field"><label>Primary contact</label><input name="contact_name" /></div>
           <div className="field"><label>Contact email</label><input name="contact_email" type="email" /></div>
+          <div className="field"><label>GST number</label><input name="gst_number" placeholder="22AAAAA0000A1Z5" maxLength={15} style={{ textTransform: 'uppercase' }} /></div>
           {/* <div className="field">
             <label>Tier</label>
             <select name="tier" defaultValue="Standard">
@@ -88,6 +96,11 @@ export default function CompaniesPage() {
               <option>Premium</option>
             </select>
           </div> */}
+          {companyMutation.isError && (
+            <p className="error-text" role="alert">
+              Could not save — check the GST number format and that the document is a PDF/Word file under 5MB.
+            </p>
+          )}
           <Button type="submit" loading={companyMutation.isPending}>
             {companyMutation.isPending ? 'Saving...' : 'Onboard company'}
           </Button>
@@ -103,7 +116,19 @@ export default function CompaniesPage() {
             <div className="row-between">
               <div>
                 <h2>{company.name}</h2>
-                <p className="muted">{company.industry} · {company.contact_name}</p>
+                <p className="muted">
+                  {company.industry} · {company.contact_name}
+                  {company.gst_number && <> · GST: {company.gst_number}</>}
+                </p>
+                {company.document_path && (
+                  <button
+                    type="button"
+                    className="link-button muted"
+                    onClick={() => viewCompanyDocument(company)}
+                  >
+                    View uploaded document ↗
+                  </button>
+                )}
               </div>
               <Button
                 variant="secondary"

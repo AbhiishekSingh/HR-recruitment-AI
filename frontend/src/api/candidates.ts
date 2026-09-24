@@ -19,28 +19,7 @@ export async function createCandidate(payload: {
   return data
 }
 
-export interface ParsedResume {
-  candidate_name: string
-  candidate_email: string
-  candidate_phone: string
-  current_company: string
-  skills: string[]
-  total_experience_years: number | null
-  resume_summary: string
-  warning: string | null
-}
 
-/** Reads a resume file and returns extracted fields to prefill the "Add
- *  candidate" form. Nothing is saved yet — the candidate is only created
- *  when the person clicks "Save candidate", same as before. */
-export async function parseResume(file: File): Promise<ParsedResume> {
-  const formData = new FormData()
-  formData.append('file', file)
-  const { data } = await client.post<ParsedResume>('/candidates/parse-resume', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
-  return data
-}
 
 export async function bulkUploadResumes(files: File[], jobId?: string): Promise<Candidate[]> {
   const formData = new FormData()

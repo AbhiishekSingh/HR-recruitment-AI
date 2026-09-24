@@ -11,7 +11,9 @@ export interface Company {
   industry: string
   contact_name: string
   contact_email: string
+  gst_number: string
   tier: string
+  document_path: string | null
   onboarded_on: string
 }
 

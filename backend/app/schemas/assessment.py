@@ -72,7 +72,7 @@ class AssessmentScored(AssessmentOut):
     candidate_email: str
     candidate_experience_years: float
     candidate_current_company: str
-    candidate_status: str  # queued | extracting | embedding | ready | failed | needs_review
+    candidate_status: str | None = None  # queued | extracting | embedding | ready | failed | needs_review
     ai_score: int | None = None
     # "ai_pipeline" = a real GPT-5 MatchResult was found for this pair;
     # "estimate" = matching hasn't run yet and this is the cheap keyword-

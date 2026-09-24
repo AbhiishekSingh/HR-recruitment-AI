@@ -1,5 +1,4 @@
 import logging
-import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,9 +16,6 @@ from app.models.assessment import Assessment
 from app.models.job_posting import JobPosting
 from app.models.user import User
 from app.schemas.candidate import CandidateCreate, CandidateOut
-from app.services.extraction.text_router import extract_text, ScannedPDFError
-from app.services.extraction.vision_extractor import render_pdf_pages_to_base64_png
-from app.services.llm.factory import get_llm_provider
 from app.workers.tasks_ingestion import ingest_resume_task
 
 router = APIRouter()
@@ -83,79 +79,6 @@ async def create_candidate(
     return candidate
 
 
-@router.post("/parse-resume")
-async def parse_resume(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-):
-    """Reads one resume file and returns extracted fields to prefill the
-    'Add candidate' form -- nothing is written to the database here. The
-    file itself is re-uploaded separately when the form is actually saved
-    (create_candidate doesn't accept a file, so the frontend attaches it
-    via PUT /{candidate_id}/resume right after creating the record).
-
-    Runs the same extract_text -> GPT-5 extract_resume steps as the
-    ingestion pipeline, just synchronously and without Celery -- one file,
-    one request, the person is watching the form and waiting on it, so a
-    background task queue would only add latency here, not value.
-
-    A parse failure (corrupt file, no text layer, GPT-5 error) degrades to
-    an empty/best-effort result rather than a 500: the person can still
-    fill the form in by hand, this is a convenience, not a requirement."""
-    ext = Path(file.filename).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Unsupported file type: {file.filename}")
-
-    contents = await file.read()
-    if len(contents) > MAX_RESUME_BYTES:
-        raise HTTPException(400, f"{file.filename} exceeds the 5MB resume size limit")
-
-    empty_result = {
-        "candidate_name": "", "candidate_email": "", "candidate_phone": "",
-        "current_company": "", "skills": [], "total_experience_years": None,
-        "resume_summary": "", "warning": None,
-    }
-
-    # extract_text/render_pdf_pages_to_base64_png need a real path on disk,
-    # not the bytes -- write to a throwaway temp file rather than a
-    # candidate's permanent upload slot, since no candidate exists yet at
-    # this point.
-    with tempfile.NamedTemporaryFile(suffix=ext, delete=True) as tmp:
-        tmp.write(contents)
-        tmp.flush()
-
-        try:
-            raw_text = extract_text(tmp.name)
-        except ScannedPDFError:
-            # No text layer -- fall back to GPT-5 vision reading the page
-            # images directly, instead of requiring Tesseract/Poppler.
-            try:
-                llm = get_llm_provider()
-                images = render_pdf_pages_to_base64_png(tmp.name)
-                extraction = await llm.extract_resume_from_images(images)
-            except Exception:
-                logger.exception("parse_resume: vision extraction failed for %s", file.filename)
-                return {**empty_result, "warning": "Couldn't read this scanned PDF automatically -- fill in the details manually."}
-            return _parsed_response(extraction, resume_summary=_summarize_extraction(extraction))
-        except Exception:
-            # Logged with the traceback rather than swallowed silently --
-            # this used to be a black hole where "couldn't read text" could
-            # mean several different things. Check the server/worker logs
-            # for this line to see the real cause.
-            logger.exception("parse_resume: extract_text failed for %s", file.filename)
-            return {**empty_result, "warning": "Couldn't read text from this file -- fill in the details manually."}
-
-    if not raw_text or not raw_text.strip():
-        return {**empty_result, "warning": "Couldn't read text from this file -- fill in the details manually."}
-
-    try:
-        llm = get_llm_provider()
-        extraction = await llm.extract_resume(raw_text)
-    except Exception:
-        logger.exception("parse_resume: llm.extract_resume failed for %s", file.filename)
-        return {**empty_result, "warning": "Automatic parsing failed -- fill in the details manually."}
-
-    return _parsed_response(extraction, resume_summary=raw_text.strip()[:600])
 
 
 def _parsed_response(extraction: dict, resume_summary: str) -> dict:
