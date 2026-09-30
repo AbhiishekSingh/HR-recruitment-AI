@@ -1,0 +1,33 @@
+.sector-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-4, 16px);
+  margin-top: var(--space-4, 16px);
+}
+
+.sector-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px;
+  text-align: left;
+  cursor: pointer;
+  border: 1px solid var(--border-color, #e2e2e2);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.sector-card:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  transform: translateY(-2px);
+}
+
+.sector-card-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.sector-card-count {
+  color: var(--muted-color, #666);
+  font-size: 0.9rem;
+}

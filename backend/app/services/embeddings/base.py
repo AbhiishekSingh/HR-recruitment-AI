@@ -13,3 +13,7 @@ class EmbeddingProvider(ABC):
     @abstractmethod
     def model_version(self) -> str:
         raise NotImplementedError
+
+    async def aclose(self) -> None:
+        """See LLMProvider.aclose() -- same reasoning applies here."""
+        return None

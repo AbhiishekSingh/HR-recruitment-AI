@@ -125,6 +125,41 @@ def _as_clean_str(value) -> str:
     return ""
 
 
+# Mirrors prompts/resume_extraction.py's SECTOR_LIST -- kept as its own
+# allow-list here (rather than importing the prompt module) so validation
+# has no dependency on prompt-building code, matching the existing
+# VALID_RECOMMENDATIONS pattern below. MUST stay in sync with that list and
+# with the frontend's SECTOR_LIST in types/index.ts -- update all three
+# together whenever a sector is added or renamed.
+VALID_SECTORS = {
+    "IT", "HR", "Sales", "Marketing", "Finance", "Operations",
+    "Customer Support", "Legal", "Design", "Healthcare", "Education",
+    "Engineering", "Manufacturing", "Banking & Insurance",
+    "Retail & E-commerce", "Hospitality & Travel",
+    "Construction & Real Estate", "Logistics & Supply Chain",
+    "Media & Entertainment", "Government & Public Sector", "Agriculture",
+    "Other",
+}
+
+
+def _as_sector(value) -> str | None:
+    """Coerces to one of VALID_SECTORS, or None if the model returned
+    nothing usable -- None (not "Other") when the field is entirely absent,
+    so a candidate genuinely un-classified (e.g. an old profile predating
+    this feature) is distinguishable from one the model explicitly filed
+    under "Other"."""
+    s = _as_clean_str(value)
+    if not s:
+        return None
+    # Case-insensitive match against the allow-list, since a reasoning
+    # model occasionally varies casing ("it" / "Sales " with padding)
+    # even when told to match exactly.
+    for candidate in VALID_SECTORS:
+        if candidate.lower() == s.lower():
+            return candidate
+    return "Other"
+
+
 def coerce_resume_extraction(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raw = {}
@@ -138,6 +173,8 @@ def coerce_resume_extraction(raw: dict) -> dict:
         "education": _as_education(raw.get("education")),
         "certifications": _as_str_list(raw.get("certifications")),
         "total_experience_years": _as_float(raw.get("total_experience_years")),
+        "sector": _as_sector(raw.get("sector")),
+        "position_role": _as_clean_str(raw.get("position_role")) or None,
     }
 
 

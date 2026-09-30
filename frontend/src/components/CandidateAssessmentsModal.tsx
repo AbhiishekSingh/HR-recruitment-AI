@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getCandidateAssessments } from '../api/assessments'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { getCandidateAssessments, startAssessment } from '../api/assessments'
 import { listJobs } from '../api/jobs'
 import { BUCKET_LABELS } from '../types'
 import type { AssessmentScored, Candidate } from '../types'
@@ -25,6 +25,9 @@ export default function CandidateAssessmentsModal({ candidate: initialCandidate,
   // Local copy so a resume upload/delete updates this view immediately
   // without needing the parent list to refetch first.
   const [candidate, setCandidate] = useState(initialCandidate)
+  const [selectedJobId, setSelectedJobId] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
 
   const { data: assessments, isLoading } = useQuery({
     queryKey: ['candidateAssessments', candidate.id],
@@ -39,6 +42,29 @@ export default function CandidateAssessmentsModal({ candidate: initialCandidate,
     return jobs?.find((j) => j.id === jobId)?.title || `Job ${jobId.slice(0, 8)}`
   }
 
+  // Jobs this candidate isn't already attached to -- no point offering a
+  // job they already have an assessment (pending or screened) for.
+  const assessedJobIds = new Set((assessments || []).map((a) => a.job_id))
+  const availableJobs = (jobs || []).filter((j) => !assessedJobIds.has(j.id))
+
+  const addAssessmentMutation = useMutation({
+    mutationFn: (jobId: string) => startAssessment(candidate.id, jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['candidateAssessments', candidate.id] })
+      setSelectedJobId('')
+      setAddError(null)
+    },
+    onError: (err: any) => {
+      setAddError(err?.response?.data?.detail || 'Could not add this candidate to the job.')
+    },
+  })
+
+  function handleAddAssessment() {
+    if (!selectedJobId) return
+    setAddError(null)
+    addAssessmentMutation.mutate(selectedJobId)
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-panel modal-panel-wide" onClick={(e) => e.stopPropagation()}>
@@ -46,6 +72,28 @@ export default function CandidateAssessmentsModal({ candidate: initialCandidate,
         <p className="muted candidate-modal-subtitle">{candidate.email} · {candidate.experience_years} yrs experience</p>
 
         <ResumeManager candidate={candidate} onChanged={setCandidate} />
+
+        <div className="add-assessment-row">
+          <select
+            value={selectedJobId}
+            onChange={(e) => setSelectedJobId(e.target.value)}
+            disabled={availableJobs.length === 0}
+          >
+            <option value="">
+              {availableJobs.length === 0 ? 'No other jobs to add' : 'Select a job…'}
+            </option>
+            {availableJobs.map((j) => <option key={j.id} value={j.id}>{j.title}</option>)}
+          </select>
+          <Button
+            size="sm"
+            onClick={handleAddAssessment}
+            loading={addAssessmentMutation.isPending}
+            disabled={!selectedJobId}
+          >
+            + Put forward for this job
+          </Button>
+        </div>
+        {addError && <p className="error-text" role="alert">{addError}</p>}
 
         {isLoading && <p className="muted">Loading assessments...</p>}
 

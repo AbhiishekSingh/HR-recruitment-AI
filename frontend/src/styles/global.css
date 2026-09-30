@@ -349,6 +349,19 @@ img {
 }
 
 /* --- Find candidate modal rows --- */
+.find-candidate-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-2, 8px);
+}
+.find-candidate-filters select {
+  min-width: 160px;
+}
+.find-candidate-filters .text-input-wide {
+  flex: 1;
+  min-width: 200px;
+}
 .find-candidate-results {
   max-height: 320px;
   overflow-y: auto;

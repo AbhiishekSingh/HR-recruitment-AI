@@ -1,0 +1,25 @@
+.duplicate-match-list {
+  list-style: none;
+  margin: var(--space-3, 12px) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.duplicate-match-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border-color, #e2e2e2);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.duplicate-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: var(--space-4, 16px);
+}

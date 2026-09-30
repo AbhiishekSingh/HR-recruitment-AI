@@ -39,6 +39,32 @@ async def _mark_status(candidate_id: str, status: str) -> None:
 
 
 async def _ingest_resume(candidate_id: str, file_path: str):
+    # Tracks every LLMProvider/EmbeddingProvider instance created during this
+    # call so all of them get aclose()'d in the `finally` below, on every
+    # exit path (success, needs_review, or an exception) -- all while still
+    # inside the event loop this function is running on. Each Celery task
+    # runs its own asyncio.run(_ingest_resume(...)), which tears down that
+    # loop as soon as this function returns; an AsyncOpenAI client left open
+    # past that point can only be cleaned up later by the garbage collector,
+    # on a loop that no longer exists -- see LLMProvider.aclose()'s
+    # docstring for what that breaks (a "RuntimeError: Event loop is
+    # closed" at best, and on Windows' ProactorEventLoop, a worker that gets
+    # stuck leaving every candidate after the first one or two stuck at
+    # "queued" forever).
+    providers_to_close: list = []
+    try:
+        await _do_ingest_resume(candidate_id, file_path, providers_to_close)
+    finally:
+        for provider in providers_to_close:
+            try:
+                await provider.aclose()
+            except Exception:
+                # Best-effort cleanup -- a failure to close shouldn't mask
+                # whatever real exception (if any) is already propagating.
+                pass
+
+
+async def _do_ingest_resume(candidate_id: str, file_path: str, providers_to_close: list):
     async with AsyncSessionLocal() as db:
         candidate = await db.get(Candidate, uuid.UUID(candidate_id))
         if not candidate:
@@ -81,6 +107,7 @@ async def _ingest_resume(candidate_id: str, file_path: str):
             # against an image hash for a rare path.
             try:
                 llm = get_llm_provider()
+                providers_to_close.append(llm)
                 images = render_pdf_pages_to_base64_png(file_path)
                 extraction = await llm.extract_resume_from_images(images)
             except Exception:
@@ -88,10 +115,19 @@ async def _ingest_resume(candidate_id: str, file_path: str):
                 await db.commit()
                 return
 
-            # No literal extracted text exists for a scanned PDF -- store a
-            # short synthesized summary instead so raw_text still has
-            # something usable for display/dedup bookkeeping elsewhere.
-            raw_text = _build_embedding_summary(extraction)
+            # A scanned PDF has no text layer to extract, so raw_text would
+            # otherwise be empty -- get a verbatim line-by-line transcription
+            # via the same vision call's provider (a second GPT-5 vision
+            # call; see gpt5_provider.py's transcribe_resume_images) so this
+            # candidate's resume is fully searchable by
+            # GET /candidates/search-resumes, the same as a text-layer
+            # resume. transcribe_resume_images() is best-effort -- on
+            # failure it returns "", and raw_text falls back to the short
+            # synthesized skills/experience summary so there's still
+            # *something* on file, just with reduced search coverage for
+            # this one candidate.
+            transcribed_text = await llm.transcribe_resume_images(images)
+            raw_text = transcribed_text.strip() or _build_embedding_summary(extraction)
             contact = _extract_contact_fields(extraction)
             profile = CandidateProfile(
                 candidate_id=candidate.id,
@@ -102,6 +138,8 @@ async def _ingest_resume(candidate_id: str, file_path: str):
                 certifications=extraction.get("certifications", []),
                 total_experience_years=extraction.get("total_experience_years"),
                 extraction_model_version=llm.extraction_model,
+                sector=extraction.get("sector"),
+                position_role=extraction.get("position_role"),
             )
             await db.merge(profile)
         elif existing_profile and existing_profile.raw_text == raw_text:
@@ -116,6 +154,13 @@ async def _ingest_resume(candidate_id: str, file_path: str):
                 "education": existing_profile.education,
                 "certifications": existing_profile.certifications,
                 "total_experience_years": existing_profile.total_experience_years,
+                # Carried forward from the existing profile so a re-ingestion
+                # (e.g. a Celery retry, or a duplicate-content re-upload)
+                # doesn't lose a classification that was already computed --
+                # this path makes no LLM call, so there's nothing new to
+                # classify from.
+                "sector": existing_profile.sector,
+                "position_role": existing_profile.position_role,
             }
             # Re-run (cached path), extracted contact fields aren't stored on
             # the profile -- re-derive them from raw_text isn't worth a
@@ -125,6 +170,7 @@ async def _ingest_resume(candidate_id: str, file_path: str):
             contact = {}
         else:
             llm = get_llm_provider()
+            providers_to_close.append(llm)
             extraction = await llm.extract_resume(raw_text)
             contact = _extract_contact_fields(extraction)
 
@@ -137,6 +183,8 @@ async def _ingest_resume(candidate_id: str, file_path: str):
                 certifications=extraction.get("certifications", []),
                 total_experience_years=extraction.get("total_experience_years"),
                 extraction_model_version=llm.extraction_model,
+                sector=extraction.get("sector"),
+                position_role=extraction.get("position_role"),
             )
             await db.merge(profile)
 
@@ -173,6 +221,26 @@ async def _ingest_resume(candidate_id: str, file_path: str):
         exp_years = extraction.get("total_experience_years")
         if exp_years and not candidate.experience_years:
             candidate.experience_years = exp_years
+        # sector/position_role: only fill if currently unset, so a manual
+        # override (via PATCH /candidates/{id}) or a classification from an
+        # earlier ingestion is never silently overwritten by a later
+        # re-ingestion of the same or a re-uploaded resume.
+        if extraction.get("sector") and not candidate.sector:
+            candidate.sector = extraction["sector"]
+        if extraction.get("position_role") and not candidate.position_role:
+            candidate.position_role = extraction["position_role"]
+        # resume_skills: this was missing entirely before -- extraction has
+        # always returned a "skills" list (saved onto CandidateProfile.skills
+        # further up), but nothing ever copied it onto Candidate.resume_skills,
+        # which is the column the directory table's "Skills" column, the
+        # plain search box, and the skills/qualification filters all
+        # actually read. Result: every AI-classified candidate showed
+        # "Skills: —" regardless of what the resume said, even though the
+        # extraction had the data all along. Same guard as everything else
+        # here -- only fills in if currently empty, so it never clobbers
+        # skills entered manually via the "Add Candidate" form.
+        if extraction.get("skills") and not candidate.resume_skills:
+            candidate.resume_skills = extraction["skills"]
 
         candidate.status = "embedding"
         await db.commit()
@@ -180,6 +248,7 @@ async def _ingest_resume(candidate_id: str, file_path: str):
         # 3. Build a clean summary and embed it (see doc: extract-then-embed, not RAG chunking)
         summary = _build_embedding_summary(extraction)
         embedder = get_embedding_provider()
+        providers_to_close.append(embedder)
         vectors = await embedder.embed([summary])
 
         embedding_row = CandidateEmbedding(

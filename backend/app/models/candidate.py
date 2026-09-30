@@ -30,6 +30,19 @@ class Candidate(Base):
     resume_skills: Mapped[list] = mapped_column(JSONB, default=list)
     resume_summary: Mapped[str] = mapped_column(String, default="")
 
+    # Auto-classified from the most recent work_history entry during resume
+    # extraction (see prompts/resume_extraction.py + tasks_ingestion.py's
+    # guarded-sync block). sector is a fixed allow-list (validation.py's
+    # VALID_SECTORS) so it can drive the sector-cards landing page's filter;
+    # position_role is a semi-open string (a suggested-per-sector title, or a
+    # close real-world title when nothing in the list fits). Both are null
+    # until classified, and both can be set manually via PATCH
+    # /candidates/{id} to override or correct an AI guess — that manual value
+    # is never clobbered by a later re-ingestion (guarded-sync only fills
+    # blanks).
+    sector: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    position_role: Mapped[str | None] = mapped_column(String(150), nullable=True)
+
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="queued")
     # queued | extracting | embedding | ready | failed | needs_review

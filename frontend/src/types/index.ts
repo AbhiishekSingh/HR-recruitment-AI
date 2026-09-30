@@ -44,6 +44,74 @@ export interface Candidate {
   file_path: string | null
   status: string // queued | extracting | embedding | ready | failed | needs_review
   added_on: string
+  // Auto-classified from the candidate's most recent resume job during
+  // ingestion (or set manually via PATCH /candidates/{id}). Null until a
+  // resume has been processed, or if extraction hasn't run yet.
+  sector: string | null
+  position_role: string | null
+}
+
+// Mirrors the backend's fixed sector allow-list (validation.py's
+// VALID_SECTORS, also mirrored in prompts/resume_extraction.py's
+// SECTOR_LIST) -- used for the sector-cards landing page and the manual
+// override dropdown. Update all three together whenever a sector is added
+// or renamed.
+export const SECTOR_LIST = [
+  'IT', 'HR', 'Sales', 'Marketing', 'Finance', 'Operations',
+  'Customer Support', 'Legal', 'Design', 'Healthcare', 'Education',
+  'Engineering', 'Manufacturing', 'Banking & Insurance',
+  'Retail & E-commerce', 'Hospitality & Travel',
+  'Construction & Real Estate', 'Logistics & Supply Chain',
+  'Media & Entertainment', 'Government & Public Sector', 'Agriculture',
+  'Other',
+] as const
+
+export interface SectorCount {
+  sector: string
+  count: number
+}
+
+// POST /candidates/check-duplicate -- run before an actual upload, so the
+// recruiter can be asked what to do about a likely-same person already on
+// file rather than silently getting a duplicate candidate row.
+export interface DuplicateMatch {
+  candidate_id: string
+  name: string
+  email: string
+  phone: string
+  status: string
+  added_on: string
+  matched_on: ('email' | 'phone')[]
+}
+
+export interface DuplicateCheckResult {
+  // false when no pre-check was possible at all (e.g. a scanned PDF with no
+  // text layer) -- distinct from checked=true with an empty matches list,
+  // which means the check ran and genuinely found nothing.
+  checked: boolean
+  matches: DuplicateMatch[]
+}
+
+// GET /candidates/search-resumes -- full-text search across resume raw
+// text (not just the structured fields the directory's regular filters
+// search). `highlights` are [start, end) character offsets of each match
+// within `text`, computed server-side so the frontend just wraps those
+// spans rather than re-implementing the (case-insensitive) matching.
+export interface ResumeSearchMatch {
+  line_number: number
+  text: string
+  highlights: [number, number][]
+}
+
+export interface ResumeSearchResult {
+  candidate_id: string
+  candidate_name: string
+  sector: string | null
+  position_role: string | null
+  status: string
+  has_resume_file: boolean
+  matches: ResumeSearchMatch[]
+  has_more_matches: boolean
 }
 
 export interface AssessmentScored {

@@ -7,6 +7,7 @@ import Register from './pages/Register'
 import CompaniesPage from './pages/CompaniesPage'
 import PipelinePage from './pages/PipelinePage'
 import CandidatesDirectoryPage from './pages/CandidatesDirectoryPage'
+import CandidateCategoriesPage from './pages/CandidateCategoriesPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/" element={<ProtectedRoute><Navigate to="/companies" replace /></ProtectedRoute>} />
         <Route path="/companies" element={<ProtectedRoute><CompaniesPage /></ProtectedRoute>} />
         <Route path="/pipeline/:jobId" element={<ProtectedRoute><PipelinePage /></ProtectedRoute>} />
+        <Route path="/candidates/categories" element={<ProtectedRoute><CandidateCategoriesPage /></ProtectedRoute>} />
         <Route path="/candidates" element={<ProtectedRoute><CandidatesDirectoryPage /></ProtectedRoute>} />
         <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
       </Routes>

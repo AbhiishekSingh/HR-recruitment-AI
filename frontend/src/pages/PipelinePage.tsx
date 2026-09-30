@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getJob } from '../api/jobs'
-import { bulkUploadResumes, listCandidates } from '../api/candidates'
+import { bulkUploadResumes, listCandidates, getSectorCounts } from '../api/candidates'
 import { getJobPipeline, startAssessment, sendToClient } from '../api/assessments'
 import { BUCKET_LABELS } from '../types'
 import type { AssessmentScored } from '../types'
@@ -247,7 +247,27 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
 
 function FindCandidateModal({ jobId, onClose, onSelected }: { jobId: string; onClose: () => void; onSelected: (assessment: AssessmentScored) => void }) {
   const [search, setSearch] = useState('')
-  const { data: candidates } = useQuery({ queryKey: ['candidates', search], queryFn: () => listCandidates(search) })
+  const [sector, setSector] = useState('')
+
+  // Sector options come from real data (candidates that actually exist),
+  // not a hardcoded list -- so a custom sector a recruiter typed via
+  // SectorPicker on the upload form shows up here too, not just the
+  // built-in suggested ones.
+  const { data: sectorCounts } = useQuery({ queryKey: ['candidateSectorCounts'], queryFn: getSectorCounts })
+
+  // BUG FIX: this used to call `listCandidates(search)` -- passing a plain
+  // string where listCandidates(filters: CandidateFilters) expects an
+  // object. Since every string has a built-in `.search` method
+  // (String.prototype.search), `filters.search` was reading that function
+  // reference instead of undefined, which is truthy -- so the backend
+  // always received a garbled, unmatchable `search` param regardless of
+  // what was actually typed, and the modal could never find any existing
+  // candidate no matter how many were on file. Fixed by passing the actual
+  // filters object, and a `sector` filter added alongside it (see below).
+  const { data: candidates, isLoading } = useQuery({
+    queryKey: ['candidates', search, sector],
+    queryFn: () => listCandidates({ search: search || undefined, sector: sector || undefined }),
+  })
 
   const startMutation = useMutation({
     mutationFn: (candidateId: string) => startAssessment(candidateId, jobId),
@@ -258,20 +278,32 @@ function FindCandidateModal({ jobId, onClose, onSelected }: { jobId: string; onC
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
         <h2>Assess a candidate</h2>
-        <input className="text-input-wide" placeholder="Search name, email or phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <p className="muted">Pick a sector to browse its candidates, search by name/email/phone, or both together.</p>
+        <div className="find-candidate-filters">
+          <select value={sector} onChange={(e) => setSector(e.target.value)}>
+            <option value="">All sectors</option>
+            {(sectorCounts || []).map((sc) => (
+              <option key={sc.sector} value={sc.sector}>{sc.sector} ({sc.count})</option>
+            ))}
+          </select>
+          <input className="text-input-wide" placeholder="Search name, email or phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
         <div className="find-candidate-results">
+          {isLoading && <p className="muted">Loading…</p>}
           {candidates?.map((c) => (
             <div key={c.id} className="find-candidate-row">
               <div>
                 <strong>{c.name}</strong>
-                <div className="muted">{c.email} · {c.experience_years} yrs</div>
+                <div className="muted">{c.email} · {c.experience_years} yrs{c.sector ? ` · ${c.sector}` : ''}</div>
               </div>
               <Button variant="secondary" size="sm" onClick={() => startMutation.mutate(c.id)} loading={startMutation.isPending}>
                 Select &amp; screen
               </Button>
             </div>
           ))}
-          {candidates?.length === 0 && <EmptyState message="No candidates match. Add one from the Candidates directory first." />}
+          {!isLoading && candidates?.length === 0 && (
+            <EmptyState message="No candidates match. Try a different sector or search term, or add one from the Candidates directory first." />
+          )}
         </div>
         <div className="row-between" style={{ marginTop: 'var(--space-4)' }}>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>

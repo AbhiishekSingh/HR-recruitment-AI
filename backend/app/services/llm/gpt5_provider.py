@@ -7,7 +7,11 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from app.config import settings
 from app.services.llm.base import LLMProvider
 from app.services.llm.prompts.jd_extraction import build_jd_extraction_prompt
-from app.services.llm.prompts.resume_extraction import build_resume_extraction_prompt, build_resume_vision_prompt
+from app.services.llm.prompts.resume_extraction import (
+    build_resume_extraction_prompt,
+    build_resume_transcription_prompt,
+    build_resume_vision_prompt,
+)
 from app.services.llm.prompts.candidate_scoring import build_scoring_prompt
 from app.services.llm.validation import coerce_jd_extraction, coerce_resume_extraction, coerce_score_result
 
@@ -139,7 +143,21 @@ class GPT5Provider(LLMProvider):
             build_resume_extraction_prompt(resume_text),
             model=self.extraction_model,
             reasoning_effort="minimal",
-            max_output_tokens=1200,
+            # Was 1200. max_completion_tokens caps TOTAL output, including the
+            # model's hidden reasoning tokens -- not just the visible JSON
+            # answer (see _call()'s docstring). Adding sector/position_role
+            # made the schema wider and the classification rules in the
+            # prompt longer, which made a longer/denser resume's hidden
+            # reasoning more likely to consume the whole 1200-token budget
+            # before any JSON got written -- an empty response then fails
+            # json.loads() with "Expecting value: line 1 column 1", which is
+            # retried (3x via tenacity, then 3x more via Celery) and
+            # eventually fails the candidate outright, having paid for every
+            # one of those empty attempts along the way. 2200 gives the
+            # reasoning + full JSON schema real headroom without meaningfully
+            # changing per-resume cost on the common case, which finishes
+            # well under either cap.
+            max_output_tokens=2200,
         )
         return coerce_resume_extraction(raw)
 
@@ -148,9 +166,52 @@ class GPT5Provider(LLMProvider):
             build_resume_vision_prompt(images_b64),
             model=self.extraction_model,
             reasoning_effort="minimal",
-            max_output_tokens=1200,
+            max_output_tokens=2200,  # see extract_resume()'s comment
         )
         return coerce_resume_extraction(raw)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=20),
+        retry=retry_if_exception_type(RETRYABLE_ERRORS[:-1]),  # no JSON here, see below
+        reraise=True,
+    )
+    async def _call_text(self, messages: list[dict], model: str, max_output_tokens: int) -> str:
+        # Separate from _call(): transcription output is plain text, not
+        # JSON, so this skips response_format={"type": "json_object"}
+        # (OpenAI's JSON mode requires the prompt to literally ask for JSON,
+        # which a transcription prompt shouldn't) and json.loads(). Retryable
+        # on the same transient-error set as _call() minus JSONDecodeError,
+        # which can't occur here since nothing is parsed as JSON.
+        response = await self.client.chat.completions.create(
+            model=model,
+            messages=messages,
+            extra_body={
+                "reasoning_effort": "minimal",
+                "max_completion_tokens": max_output_tokens,
+            },
+        )
+        return response.choices[0].message.content or ""
+
+    async def transcribe_resume_images(self, images_b64: list[str]) -> str:
+        # Best-effort: a transcription failure shouldn't fail the whole
+        # ingestion (extraction/scoring already succeeded by the time this
+        # runs) -- it only means this candidate's full-text search coverage
+        # falls back to the short synthesized summary instead of the whole
+        # resume. See tasks_ingestion.py for how the empty-string case is
+        # handled.
+        try:
+            return await self._call_text(
+                build_resume_transcription_prompt(images_b64),
+                model=self.extraction_model,
+                # A full page-by-page verbatim transcription is longer than
+                # the structured JSON extraction of the same resume (no
+                # schema to compress into), so this gets more headroom than
+                # extract_resume_from_images()'s 2200.
+                max_output_tokens=3500,
+            )
+        except Exception:
+            return ""
 
     async def score_candidate(self, jd_requirements: dict, candidate_profile: dict) -> dict:
         # Stays on the full model with a bit more reasoning headroom than
@@ -164,3 +225,10 @@ class GPT5Provider(LLMProvider):
             max_output_tokens=600,
         )
         return coerce_score_result(raw)
+
+    async def aclose(self) -> None:
+        # Closes the underlying httpx.AsyncClient's connection pool. Must be
+        # awaited inside the same event loop this client was created on --
+        # see LLMProvider.aclose()'s docstring for why this matters, and
+        # tasks_ingestion.py for where it's actually called.
+        await self.client.close()

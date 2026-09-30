@@ -1,0 +1,9 @@
+.sector-picker-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sector-picker-custom-row input {
+  flex: 1;
+}

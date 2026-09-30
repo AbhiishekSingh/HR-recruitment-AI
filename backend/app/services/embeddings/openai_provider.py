@@ -40,3 +40,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     @property
     def model_version(self) -> str:
         return self.model
+
+    async def aclose(self) -> None:
+        # See GPT5Provider.aclose() -- same reasoning.
+        await self.client.close()

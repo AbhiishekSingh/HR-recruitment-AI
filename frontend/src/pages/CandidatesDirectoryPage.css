@@ -8,3 +8,61 @@
 @media (min-width: 600px) {
   .candidates-page { padding: var(--space-6) 0; }
 }
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 6px;
+  color: var(--primary-color, #4b5fff);
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.sector-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.sector-edit-form select,
+.sector-edit-form input {
+  font-size: 0.85rem;
+  padding: 4px 6px;
+}
+
+.filters-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: var(--space-2, 8px);
+}
+
+.add-mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: var(--space-4, 16px);
+  border-bottom: 1px solid var(--border-color, #e2e2e2);
+}
+
+.add-mode-tab {
+  background: none;
+  border: none;
+  padding: 8px 4px;
+  margin-right: 20px;
+  font-size: 0.95rem;
+  color: var(--muted-color, #666);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.add-mode-tab-active {
+  color: var(--primary-color, #4b5fff);
+  border-bottom-color: var(--primary-color, #4b5fff);
+  font-weight: 600;
+}
+
+.success-text {
+  color: #1a7f37;
+}

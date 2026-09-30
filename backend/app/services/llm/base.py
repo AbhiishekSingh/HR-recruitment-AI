@@ -22,7 +22,29 @@ class LLMProvider(ABC):
         vision-capable model instead of requiring a separate OCR engine."""
         raise NotImplementedError
 
+    async def transcribe_resume_images(self, images_b64: list[str]) -> str:
+        """Verbatim line-by-line text transcription of a scanned/image-only
+        resume's pages, for full-text search (see prompts/resume_extraction
+        .py's build_resume_transcription_prompt). Not abstract: a provider
+        that can't do this (or where it isn't worth the extra call) can fall
+        back to the default no-op below, and callers treat an empty string
+        the same as "not available" -- see tasks_ingestion.py."""
+        return ""
+
     @abstractmethod
     async def score_candidate(self, jd_requirements: dict, candidate_profile: dict) -> dict:
         """Returns a dict matching schemas.match.MatchResultOut (score/matched/missing/etc)."""
         raise NotImplementedError
+
+    async def aclose(self) -> None:
+        """Releases the provider's underlying HTTP client/connections.
+        Default no-op for providers that don't hold one; concrete providers
+        backed by an async HTTP client (e.g. AsyncOpenAI) MUST override this.
+        Callers running inside a per-call `asyncio.run(...)` (see
+        tasks_ingestion.py) must await this before that call returns -- an
+        unclosed async client's connections outlive the event loop they were
+        opened on, and Python's later garbage-collection attempt to close
+        them then raises "RuntimeError: Event loop is closed" and, worse on
+        Windows' ProactorEventLoop, can leave the *next* asyncio.run() call
+        in the same worker process in a broken state."""
+        return None

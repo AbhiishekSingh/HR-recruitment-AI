@@ -25,3 +25,11 @@ class CandidateProfile(Base):
     # See migration f1a2b3c4d5e6.
     total_experience_years: Mapped[float | None] = mapped_column(Float, nullable=True)
     extraction_model_version: Mapped[str] = mapped_column(String(100))
+
+    # Source-of-truth classification from the extraction call (see
+    # prompts/resume_extraction.py). Stored here too (not just on Candidate)
+    # so the cached-path in tasks_ingestion.py — where a resume's raw_text is
+    # unchanged and extraction isn't re-run — can still carry sector/
+    # position_role forward instead of losing them on a Celery retry.
+    sector: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    position_role: Mapped[str | None] = mapped_column(String(150), nullable=True)

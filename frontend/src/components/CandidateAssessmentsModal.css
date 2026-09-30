@@ -37,3 +37,15 @@
 .candidate-modal-actions {
   margin-top: var(--space-4);
 }
+
+.add-assessment-row {
+  display: flex;
+  gap: var(--space-2, 8px);
+  align-items: center;
+  margin: var(--space-3, 12px) 0;
+}
+
+.add-assessment-row select {
+  flex: 1;
+  min-width: 0;
+}
