@@ -7,6 +7,7 @@
 
 import calendar
 from datetime import datetime
+from datetime import timezone
 from decimal import Decimal
 from io import BytesIO
 from struct import pack, unpack_from
@@ -43,12 +44,12 @@ def _read_item(buf, offset):
             val = buf[offset:offset + slen]
 
         offset += slen
-    # 's': short string
+    # 's': RabbitMQ 16-bit signed int (AMQP 0-9-1 errata; the spec's short
+    # string letter, which RabbitMQ and its clients never send in tables).
+    # Reading it as a string mangled pika/pamqp headers, celery/kombu#2354.
     elif ftype == 's':
-        slen, = unpack_from('>B', buf, offset)
-        offset += 1
-        val = pstr_t(buf[offset:offset + slen])
-        offset += slen
+        val, = unpack_from('>h', buf, offset)
+        offset += 2
     # 'x': Bytes Array
     elif ftype == 'x':
         blen, = unpack_from('>I', buf, offset)
@@ -79,13 +80,16 @@ def _read_item(buf, offset):
     elif ftype == 'i':
         val, = unpack_from('>I', buf, offset)
         offset += 4
-    # 'L': long long int
+    # 'L': long long int (Qpid unsigned 64-bit uses this letter in some
+    # stacks; py-amqp historically wrote signed 64-bit values as 'L')
     elif ftype == 'L':
         val, = unpack_from('>q', buf, offset)
         offset += 8
-    # 'l': long long unsigned int
+    # 'l': RabbitMQ 64-bit signed int (AMQP 0-9-1 long-long-int).
+    # Decoding as unsigned turned delayed-exchange x-delay=-1000 into
+    # 18446744073709550616. See celery/py-amqp#438.
     elif ftype == 'l':
-        val, = unpack_from('>Q', buf, offset)
+        val, = unpack_from('>q', buf, offset)
         offset += 8
     # 'f': float
     elif ftype == 'f':
@@ -132,7 +136,7 @@ def _read_item(buf, offset):
     elif ftype == 'T':
         val, = unpack_from('>Q', buf, offset)
         offset += 8
-        val = datetime.utcfromtimestamp(val)
+        val = datetime.fromtimestamp(val, tz=timezone.utc).replace(tzinfo=None)
     # 'V': void
     elif ftype == 'V':
         val = None
@@ -235,7 +239,8 @@ def loads(format, buf, offset):
             bitcount = bits = 0
             val, = unpack_from('>Q', buf, offset)
             offset += 8
-            val = datetime.utcfromtimestamp(val)
+            val = datetime.fromtimestamp(val, tz=timezone.utc).replace(
+                tzinfo=None)
         else:
             raise FrameSyntaxError(ILLEGAL_TABLE_TYPE.format(p))
         append(val)

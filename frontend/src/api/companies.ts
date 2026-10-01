@@ -25,6 +25,11 @@ export async function createCompany(payload: {
   return data
 }
 
+export async function setCompanyActive(companyId: string, isActive: boolean): Promise<Company> {
+  const { data } = await client.patch<Company>(`/companies/${companyId}/status`, { is_active: isActive })
+  return data
+}
+
 /** Fetches the company's uploaded document as an authenticated blob and
  *  opens/downloads it — same pattern as viewCandidateResume, needed
  *  because the endpoint requires the bearer token a plain <a href> won't send. */

@@ -1,6 +1,8 @@
 .companies-page { padding: var(--space-5) 0 var(--space-6); }
 .company-block { margin-bottom: var(--space-5); }
 .company-block h2 { font-size: var(--text-lg); margin: 0; }
+.company-title-row { gap: var(--space-2); }
+.company-title-row .link-button { margin-top: 0; }
 .jd-form {
   margin: var(--space-4) 0;
   padding: var(--space-4);
@@ -10,18 +12,7 @@
 }
 .jd-form textarea { width: 100%; font-family: inherit; }
 
-.link-button {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: var(--color-primary, #1a3a6b);
-  text-decoration: underline;
-  cursor: pointer;
-  display: inline-block;
-  margin-top: 2px;
-}
-.link-button:hover { opacity: 0.8; }
+/* .link-button moved to styles/global.css (shared with the Shortlisted page) */
 
 @media (min-width: 600px) {
   .companies-page { padding: var(--space-6) 0; }

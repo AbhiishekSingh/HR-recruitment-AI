@@ -1,28 +1,25 @@
-.auth-page {
-  min-height: 100vh;
+.analytics-page { padding: var(--space-5) 0 var(--space-6); }
+.analytics-page h2 { font-size: var(--text-md); margin: 0 0 var(--space-4); }
+.analytics-section { margin-bottom: var(--space-5); }
+.analytics-count-pass { color: var(--color-pass); font-size: var(--text-sm); font-weight: 600; }
+
+.funnel-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: var(--color-bg);
-  padding: var(--space-5);
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
-
-.auth-card {
-  width: 100%;
-  max-width: 380px;
+.funnel-label {
+  width: 120px;
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
 }
+.funnel-track { flex: 1; height: 10px; background: var(--color-bg); border-radius: 999px; overflow: hidden; }
+.funnel-fill { height: 100%; background: var(--color-accent); border-radius: 999px; transition: width var(--transition-base); }
+.funnel-value { width: 36px; text-align: right; font-weight: 700; flex-shrink: 0; }
 
-.auth-card h1 {
-  font-size: 20px;
-  margin: 0 0 var(--space-5);
-  color: var(--color-navy);
-}
-
-.auth-card .btn {
-  width: 100%;
-}
-
-.auth-switch {
-  margin-top: var(--space-4);
-  text-align: center;
+@media (min-width: 600px) {
+  .analytics-page { padding: var(--space-6) 0; }
+  .funnel-label { width: 160px; }
 }

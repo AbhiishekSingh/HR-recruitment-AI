@@ -36,6 +36,7 @@ export default function Navbar() {
             <nav className={`navbar-links ${menuOpen ? 'navbar-links-open' : ''}`}>
               <Link to="/companies" onClick={() => setMenuOpen(false)}>Companies &amp; Roles</Link>
               <Link to="/candidates/categories" onClick={() => setMenuOpen(false)}>Candidates</Link>
+              <Link to="/shortlisted" onClick={() => setMenuOpen(false)}>Shortlisted</Link>
               <Link to="/analytics" onClick={() => setMenuOpen(false)}>Analytics</Link>
               <span className="muted navbar-user">{user.name}</span>
               <Button variant="secondary" size="sm" onClick={handleLogout}>Log out</Button>

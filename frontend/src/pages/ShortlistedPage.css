@@ -1,0 +1,38 @@
+.shortlisted-page { padding: var(--space-5) 0 var(--space-6); }
+
+.shortlisted-search {
+  flex: 1;
+  min-width: 200px;
+  width: auto;
+}
+
+.shortlisted-search-row { margin-top: calc(-1 * var(--space-2)); }
+
+.shortlisted-ctc {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.shortlisted-ctc .text-input-wide {
+  width: 120px;
+}
+
+.shortlisted-table th,
+.shortlisted-table td {
+  vertical-align: top;
+}
+.shortlisted-table .link-button {
+  font-weight: 600;
+  margin-right: 6px;
+}
+.shortlisted-company {
+  margin-top: 2px;
+}
+.shortlisted-overdue {
+  color: var(--color-pass);
+  font-weight: 600;
+}
+
+@media (min-width: 600px) {
+  .shortlisted-page { padding: var(--space-6) 0; }
+}

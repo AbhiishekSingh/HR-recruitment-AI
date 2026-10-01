@@ -34,6 +34,10 @@ class JobPostingOut(BaseModel):
         from_attributes = True
 
 
+class JobStatusUpdate(BaseModel):
+    status: str  # "Open" (shown as Active) | "Closed" (shown as Inactive)
+
+
 # --- Structured LLM extraction output shape for a JD (used later, once wired in) ---
 class JDExtractionResult(BaseModel):
     required_skills: list[str]

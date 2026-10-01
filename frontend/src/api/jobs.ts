@@ -28,3 +28,9 @@ export async function createJob(payload: JobPostingCreatePayload): Promise<JobPo
   const { data } = await client.post<JobPosting>('/jobs', payload)
   return data
 }
+
+/** JD Active/Inactive toggle -- "Open" = Active, "Closed" = Inactive. */
+export async function setJobStatus(id: string, status: 'Open' | 'Closed'): Promise<JobPosting> {
+  const { data } = await client.patch<JobPosting>(`/jobs/${id}/status`, { status })
+  return data
+}

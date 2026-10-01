@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCandidateAssessments, startAssessment } from '../api/assessments'
 import { listJobs } from '../api/jobs'
-import { BUCKET_LABELS } from '../types'
+import { BUCKET_LABELS, stageBadgeVariant } from '../types'
 import type { AssessmentScored, Candidate } from '../types'
 import Button from './ui/Button'
 import Badge from './ui/Badge'
 import EmptyState from './ui/EmptyState'
 import ResumeManager from './ResumeManager'
+import CandidateTrackingModal from './CandidateTrackingModal'
 import './CandidateAssessmentsModal.css'
 
 interface CandidateAssessmentsModalProps {
@@ -27,6 +28,7 @@ export default function CandidateAssessmentsModal({ candidate: initialCandidate,
   const [candidate, setCandidate] = useState(initialCandidate)
   const [selectedJobId, setSelectedJobId] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
+  const [trackingAssessmentId, setTrackingAssessmentId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   const { data: assessments, isLoading } = useQuery({
@@ -118,12 +120,20 @@ export default function CandidateAssessmentsModal({ candidate: initialCandidate,
                       Score: <strong>{a.bucket === 'pending' ? a.ai_score ?? '—' : a.final_score ?? '—'}</strong>
                       {a.bucket === 'pending' && a.ai_source === 'estimate' && ' (estimate)'}
                     </span>
+                    {a.stage && <Badge variant={stageBadgeVariant(a.stage)}>{a.stage}</Badge>}
                     {a.sent_to_client && <span className="muted">Sent to client</span>}
                   </div>
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => onScreen(a, jobTitle(a.job_id))}>
-                  {a.bucket === 'pending' ? 'Complete screening →' : 'Edit screening'}
-                </Button>
+                <div className="row">
+                  <Button variant="secondary" size="sm" onClick={() => onScreen(a, jobTitle(a.job_id))}>
+                    {a.bucket === 'pending' ? 'Complete screening →' : 'Edit screening'}
+                  </Button>
+                  {a.stage && (
+                    <Button variant="secondary" size="sm" onClick={() => setTrackingAssessmentId(a.id)}>
+                      Follow-ups &amp; tracking →
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -132,6 +142,16 @@ export default function CandidateAssessmentsModal({ candidate: initialCandidate,
         <div className="row-between candidate-modal-actions">
           <Button variant="secondary" onClick={onClose}>Close</Button>
         </div>
+
+        {trackingAssessmentId && (
+          <CandidateTrackingModal
+            assessmentId={trackingAssessmentId}
+            onClose={() => {
+              setTrackingAssessmentId(null)
+              queryClient.invalidateQueries({ queryKey: ['candidateAssessments', candidate.id] })
+            }}
+          />
+        )}
       </div>
     </div>
   )

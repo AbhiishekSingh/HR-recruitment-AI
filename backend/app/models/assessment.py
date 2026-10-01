@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 
-from sqlalchemy import String, DateTime, ForeignKey, Integer, Float, Boolean, func
+from sqlalchemy import String, DateTime, Date, ForeignKey, Integer, Float, Boolean, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -71,9 +71,36 @@ class Assessment(Base):
     approved_by: Mapped[str] = mapped_column(String(200), default="")
     submitted_to: Mapped[str] = mapped_column(String(200), default="")
 
+    # --- Post-shortlist recruitment tracking ---
+    # `stage` is the candidate's position in the placement process for THIS
+    # job, separate from `final_status` (which is the screening-call
+    # outcome). Blank until the candidate is shortlisted. Every change is
+    # logged to assessment_stage_history. See PIPELINE_STAGES below.
+    stage: Mapped[str] = mapped_column(String(30), default="", index=True)
+    submitted_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Recorded after final selection.
+    offered_ctc: Mapped[float | None] = mapped_column(Float, nullable=True)
+    joining_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Recorded after the candidate joins: only a YES/NO flag and a date.
+    # invoice_amount is kept in the table but is no longer used by the API
+    # or UI (removed from the form on request) -- no migration needed.
+    invoice_raised: Mapped[bool] = mapped_column(Boolean, default=False)
+    invoice_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    invoice_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Soft delete: null = active. A screening record is part of the decision
     # audit trail (who screened whom, when, and why) — never hard-deleted.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
+# Order matters: the first five are the forward path, the last three are
+# outcomes that can be set from any active stage.
+PIPELINE_STAGES = [
+    "Shortlisted", "Submitted", "Interview", "Selected", "Joined",
+    "On Hold", "Rejected", "Offer Declined",
+]

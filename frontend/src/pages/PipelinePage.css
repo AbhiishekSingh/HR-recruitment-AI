@@ -29,6 +29,10 @@
   white-space: nowrap;
 }
 
+/* Post-shortlist stage badge under the screening bucket badge */
+.pipeline-stage { margin-top: 4px; }
+.pipeline-row-actions { gap: var(--space-2); flex-wrap: nowrap; }
+
 @media (min-width: 600px) {
   .pipeline-page { padding: var(--space-6) 0; }
 }

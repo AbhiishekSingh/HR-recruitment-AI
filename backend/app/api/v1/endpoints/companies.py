@@ -11,7 +11,7 @@ from app.api.deps import get_db, get_current_user
 from app.config import settings
 from app.models.company import Company
 from app.models.user import User
-from app.schemas.company import CompanyOut
+from app.schemas.company import CompanyOut, CompanyStatusUpdate
 
 router = APIRouter()
 
@@ -142,6 +142,24 @@ async def upload_company_document(
     _delete_company_document(company.document_path)
 
     company.document_path = new_path
+    await db.commit()
+    await db.refresh(company)
+    return company
+
+
+@router.patch("/{company_id}/status", response_model=CompanyOut)
+async def set_company_status(
+    company_id: uuid.UUID,
+    payload: CompanyStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Active/Inactive toggle. A label only -- an inactive company keeps
+    working exactly as before (jobs, uploads, submissions are not blocked)."""
+    company = await db.get(Company, company_id)
+    if not company or company.deleted_at is not None:
+        raise HTTPException(404, "Company not found")
+    company.is_active = payload.is_active
     await db.commit()
     await db.refresh(company)
     return company

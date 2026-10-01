@@ -9,6 +9,7 @@ import PipelinePage from './pages/PipelinePage'
 import CandidatesDirectoryPage from './pages/CandidatesDirectoryPage'
 import CandidateCategoriesPage from './pages/CandidateCategoriesPage'
 import AnalyticsPage from './pages/AnalyticsPage'
+import ShortlistedPage from './pages/ShortlistedPage'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/pipeline/:jobId" element={<ProtectedRoute><PipelinePage /></ProtectedRoute>} />
         <Route path="/candidates/categories" element={<ProtectedRoute><CandidateCategoriesPage /></ProtectedRoute>} />
         <Route path="/candidates" element={<ProtectedRoute><CandidatesDirectoryPage /></ProtectedRoute>} />
+        <Route path="/shortlisted" element={<ProtectedRoute><ShortlistedPage /></ProtectedRoute>} />
         <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
       </Routes>
     </div>

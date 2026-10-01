@@ -17,12 +17,18 @@ async def hiring_funnel(db: AsyncSession = Depends(get_db), current_user: User =
     shortlisted = (await db.execute(select(func.count(Assessment.id)).where(Assessment.final_status == "Share to Client"))).scalar()
     sent = (await db.execute(select(func.count(Assessment.id)).where(Assessment.sent_to_client == True))).scalar()
     interested = (await db.execute(select(func.count(Assessment.id)).where(Assessment.client_feedback == "Interested"))).scalar()
+    selected = (await db.execute(select(func.count(Assessment.id)).where(Assessment.stage.in_(["Selected", "Joined"])))).scalar()
+    joined = (await db.execute(select(func.count(Assessment.id)).where(Assessment.stage == "Joined"))).scalar()
+    invoiced = (await db.execute(select(func.count(Assessment.id)).where(Assessment.stage == "Joined", Assessment.invoice_raised == True))).scalar()
 
     return {
         "Resumes received": total,
         "Shortlisted": shortlisted,
         "Sent to Client": sent,
         "Interested": interested,
+        "Selected": selected,
+        "Joined": joined,
+        "Invoice raised": invoiced,
     }
 
 

@@ -9,7 +9,7 @@ from app.api.deps import get_db, get_current_user
 from app.models.job_posting import JobPosting
 from app.models.company import Company
 from app.models.user import User
-from app.schemas.job import JobPostingCreate, JobPostingOut
+from app.schemas.job import JobPostingCreate, JobPostingOut, JobStatusUpdate
 
 router = APIRouter()
 
@@ -49,6 +49,27 @@ async def get_job(job_id: uuid.UUID, db: AsyncSession = Depends(get_db), current
     job = await db.get(JobPosting, job_id)
     if not job or job.deleted_at is not None:
         raise HTTPException(404, "Job posting not found")
+    return job
+
+
+@router.patch("/{job_id}/status", response_model=JobPostingOut)
+async def set_job_status(
+    job_id: uuid.UUID,
+    payload: JobStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """JD Active/Inactive toggle. Stored in the existing `status` column
+    ("Open" = Active, "Closed" = Inactive) so nothing else that reads
+    job.status has to change. Label only -- nothing is blocked."""
+    if payload.status not in ("Open", "Closed"):
+        raise HTTPException(400, "status must be 'Open' (Active) or 'Closed' (Inactive)")
+    job = await db.get(JobPosting, job_id)
+    if not job or job.deleted_at is not None:
+        raise HTTPException(404, "Job posting not found")
+    job.status = payload.status
+    await db.commit()
+    await db.refresh(job)
     return job
 
 

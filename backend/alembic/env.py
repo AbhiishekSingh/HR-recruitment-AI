@@ -10,7 +10,7 @@ from app.db.base import Base
 # Import all models so Alembic's autogenerate can see them
 from app.models import (  # noqa
     user, company, candidate, candidate_profile, candidate_embedding,
-    job_posting, match_result, assessment,
+    job_posting, match_result, assessment, follow_up, assessment_stage_history,
 )
 
 config = context.config

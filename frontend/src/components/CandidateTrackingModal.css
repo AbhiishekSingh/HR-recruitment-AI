@@ -1,0 +1,76 @@
+.tracking-subtitle {
+  margin-top: -4px;
+  margin-bottom: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.tracking-subtitle-last { margin-bottom: var(--space-4); }
+
+.tracking-hint { margin: 0 0 var(--space-3); }
+
+.tracking-invoice {
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.tracking-invoice .field:last-child { margin-bottom: 0; }
+
+.tracking-datetime {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+.tracking-datetime .field { flex: 1; min-width: 0; }
+
+.tracking-followup-form {
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tracking-followup-list,
+.tracking-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tracking-followup-item {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.tracking-followup-text {
+  font-size: var(--text-sm);
+  margin-top: 2px;
+}
+.tracking-followup-edit {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-border);
+}
+
+.tracking-timeline li {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-accent-light);
+}
+
+.tracking-actions { margin-top: var(--space-4); }
+
+/* Earlier dates of a rescheduled follow-up, shown inside the same card */
+.tracking-followup-previous {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) 0 0 var(--space-3);
+  border-left: 2px solid var(--color-border);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+.tracking-followup-previous li + li { margin-top: 2px; }
+.tracking-followup-old-date { text-decoration: line-through; }

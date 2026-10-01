@@ -4,9 +4,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getJob } from '../api/jobs'
 import { bulkUploadResumes, listCandidates, getSectorCounts } from '../api/candidates'
 import { getJobPipeline, startAssessment, sendToClient } from '../api/assessments'
-import { BUCKET_LABELS } from '../types'
+import { BUCKET_LABELS, stageBadgeVariant } from '../types'
 import type { AssessmentScored } from '../types'
 import ScreeningFormModal from '../components/ScreeningFormModal'
+import CandidateTrackingModal from '../components/CandidateTrackingModal'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
@@ -24,6 +25,7 @@ export default function PipelinePage() {
   // Store the full row (already fetched, no extra call needed) so the
   // screening modal can prefill from it and display candidate/job details.
   const [screeningTarget, setScreeningTarget] = useState<AssessmentScored | null>(null)
+  const [trackingTargetId, setTrackingTargetId] = useState<string | null>(null)
 
   const { data: job } = useQuery({ queryKey: ['job', jobId], queryFn: () => getJob(jobId!), enabled: !!jobId })
 
@@ -127,6 +129,7 @@ export default function PipelinePage() {
                     selected={selected.has(a.id)}
                     onToggleSelect={() => toggleSelect(a.id)}
                     onScreen={() => setScreeningTarget(a)}
+                    onTrack={() => setTrackingTargetId(a.id)}
                   />
                 ))}
               </tbody>
@@ -152,6 +155,10 @@ export default function PipelinePage() {
         />
       )}
 
+      {trackingTargetId && (
+        <CandidateTrackingModal assessmentId={trackingTargetId} onClose={() => setTrackingTargetId(null)} />
+      )}
+
       {screeningTarget && (
         <ScreeningFormModal
           assessment={screeningTarget}
@@ -164,11 +171,12 @@ export default function PipelinePage() {
   )
 }
 
-function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
+function PipelineRow({ assessment, selected, onToggleSelect, onScreen, onTrack }: {
   assessment: AssessmentScored
   selected: boolean
   onToggleSelect: () => void
   onScreen: () => void
+  onTrack: () => void
 }) {
   const a = assessment
   const isPending = a.bucket === 'pending'
@@ -235,11 +243,21 @@ function PipelineRow({ assessment, selected, onToggleSelect, onScreen }: {
         }>
           {BUCKET_LABELS[a.bucket]}
         </Badge>
+        {a.stage && (
+          <div className="pipeline-stage">
+            <Badge variant={stageBadgeVariant(a.stage)}>{a.stage}</Badge>
+          </div>
+        )}
       </td>
       <td>
-        <Button variant="secondary" size="sm" onClick={onScreen}>
-          {isPending ? 'Complete screening →' : 'Edit screening'}
-        </Button>
+        <div className="row pipeline-row-actions">
+          <Button variant="secondary" size="sm" onClick={onScreen}>
+            {isPending ? 'Complete screening →' : 'Edit screening'}
+          </Button>
+          {a.stage && (
+            <Button variant="secondary" size="sm" onClick={onTrack}>Track →</Button>
+          )}
+        </div>
       </td>
     </tr>
   )

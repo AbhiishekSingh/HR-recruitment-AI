@@ -14,6 +14,7 @@ from app.models.match_result import MatchResult
 from app.models.user import User
 from app.schemas.assessment import AssessmentCreate, AssessmentScored, ClientFeedbackUpdate
 from app.services.scoring.placeholder_engine import compute_final_score
+from app.services.tracking.stages import change_stage, sync_stage_from_screening
 
 router = APIRouter()
 
@@ -187,6 +188,7 @@ async def submit_screening(
         setattr(assessment, field, value)
     assessment.screened = True
     assessment.recruiter_id = current_user.id
+    sync_stage_from_screening(db, assessment, current_user.id)
 
     await db.commit()
     await db.refresh(assessment)
@@ -213,6 +215,7 @@ async def set_status(
     if not assessment:
         raise HTTPException(404, "Assessment not found")
     assessment.final_status = payload.status
+    sync_stage_from_screening(db, assessment, current_user.id)
     await db.commit()
     await db.refresh(assessment)
 
@@ -238,6 +241,10 @@ async def send_to_client(
         assessment = await db.get(Assessment, aid)
         if assessment:
             assessment.sent_to_client = True
+            # Moves Shortlisted -> Submitted (and stamps submitted_on); never
+            # moves a candidate who is already further along backwards.
+            if (assessment.stage or "") in ("", "Shortlisted"):
+                change_stage(db, assessment, "Submitted", current_user.id, "Sent to client")
             count += 1
     await db.commit()
     return {"sent": count}

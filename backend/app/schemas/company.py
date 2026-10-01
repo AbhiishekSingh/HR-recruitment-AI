@@ -12,7 +12,12 @@ class CompanyOut(BaseModel):
     gst_number: str
     tier: str
     document_path: str | None
+    is_active: bool = True
     onboarded_on: datetime
 
     class Config:
         from_attributes = True
+
+
+class CompanyStatusUpdate(BaseModel):
+    is_active: bool

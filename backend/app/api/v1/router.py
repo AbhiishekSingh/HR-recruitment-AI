@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import candidates, jobs, matching, auth, companies, assessments, analytics
+from app.api.v1.endpoints import candidates, jobs, matching, auth, companies, assessments, analytics, tracking
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -10,3 +10,5 @@ api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(matching.router, prefix="/jobs", tags=["ai-matching"])  # GPT-5 pipeline; results now surface in assessments.py's pipeline view
 api_router.include_router(assessments.router, prefix="", tags=["assessments"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
+
+api_router.include_router(tracking.router, prefix="", tags=["tracking"])  # shortlist, follow-ups, selection, invoice

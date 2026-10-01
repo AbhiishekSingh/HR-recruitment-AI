@@ -1,8 +1,9 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listCompanies, createCompany, viewCompanyDocument } from '../api/companies'
-import { listJobs, createJob } from '../api/jobs'
+import { listCompanies, createCompany, viewCompanyDocument, setCompanyActive } from '../api/companies'
+import { listJobs, createJob, setJobStatus } from '../api/jobs'
+import { jobActiveLabel } from '../types'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
@@ -32,6 +33,23 @@ export default function CompaniesPage() {
       queryClient.invalidateQueries({ queryKey: ['jobs'] })
       setJdFormForCompany(null)
       navigate(`/pipeline/${job.id}`)
+    },
+  })
+
+  // Active/Inactive toggles -- labels only, nothing is blocked for inactive ones.
+  const companyStatusMutation = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) => setCompanyActive(id, isActive),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['companies'] })
+      queryClient.invalidateQueries({ queryKey: ['shortlisted'] })
+    },
+  })
+
+  const jobStatusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'Open' | 'Closed' }) => setJobStatus(id, status),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      queryClient.invalidateQueries({ queryKey: ['shortlisted'] })
     },
   })
 
@@ -115,7 +133,18 @@ export default function CompaniesPage() {
           <section key={company.id} className="card company-block">
             <div className="row-between">
               <div>
-                <h2>{company.name}</h2>
+                <div className="row company-title-row">
+                  <h2>{company.name}</h2>
+                  <Badge variant={company.is_active ? 'shortlist' : 'pass'}>{company.is_active ? 'Active' : 'Inactive'}</Badge>
+                  <button
+                    type="button"
+                    className="link-button muted"
+                    disabled={companyStatusMutation.isPending}
+                    onClick={() => companyStatusMutation.mutate({ id: company.id, isActive: !company.is_active })}
+                  >
+                    Mark {company.is_active ? 'inactive' : 'active'}
+                  </button>
+                </div>
                 <p className="muted">
                   {company.industry} · {company.contact_name}
                   {company.gst_number && <> · GST: {company.gst_number}</>}
@@ -172,7 +201,19 @@ export default function CompaniesPage() {
                         <td>{jd.locations.join(', ')}</td>
                         <td>₹{(jd.budget_min / 100000).toFixed(1)}L – ₹{(jd.budget_max / 100000).toFixed(1)}L</td>
                         <td>{jd.experience_min}–{jd.experience_max} yrs</td>
-                        <td><Badge variant={jd.status === 'Open' ? 'shortlist' : 'pass'}>{jd.status}</Badge></td>
+                        <td>
+                          <Badge variant={jd.status === 'Open' ? 'shortlist' : 'pass'}>{jobActiveLabel(jd.status)}</Badge>
+                          <div>
+                            <button
+                              type="button"
+                              className="link-button muted"
+                              disabled={jobStatusMutation.isPending}
+                              onClick={() => jobStatusMutation.mutate({ id: jd.id, status: jd.status === 'Open' ? 'Closed' : 'Open' })}
+                            >
+                              Mark {jd.status === 'Open' ? 'inactive' : 'active'}
+                            </button>
+                          </div>
+                        </td>
                         <td><Button variant="secondary" size="sm" onClick={() => navigate(`/pipeline/${jd.id}`)}>Open pipeline →</Button></td>
                       </tr>
                     ))}

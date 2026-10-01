@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, func
+from sqlalchemy import String, DateTime, Boolean, func, true
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,6 +25,10 @@ class Company(Base):
     # same storage pattern as Candidate.file_path. Null until one is
     # attached; a company can be onboarded without a document.
     document_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Active/Inactive is a label only -- an inactive company still accepts
+    # jobs, uploads and submissions. Distinct from deleted_at (hidden).
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
 
     # Soft delete: null = active. Set instead of a hard DELETE so historical
     # jobs/assessments tied to this company stay intact and auditable.

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from pydantic import BaseModel
 
 
@@ -28,6 +28,8 @@ class AssessmentCreate(BaseModel):
     red_flags: str = ""
     final_status: str = "Share to Client"
     recruiter_remarks: str = ""
+    approved_by: str = ""
+    submitted_to: str = ""
 
 
 class AssessmentOut(BaseModel):
@@ -58,7 +60,17 @@ class AssessmentOut(BaseModel):
     screened: bool
     sent_to_client: bool
     client_feedback: str | None
+    approved_by: str = ""
+    submitted_to: str = ""
+    # Post-shortlist tracking
+    stage: str = ""
+    submitted_on: datetime | None = None
+    offered_ctc: float | None = None
+    joining_date: date | None = None
+    invoice_raised: bool = False
+    invoice_date: date | None = None
     created_at: datetime
+    updated_at: datetime | None = None
 
     class Config:
         from_attributes = True
