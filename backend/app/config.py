@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     # model via llm_model_name, since match quality matters more there.
     llm_extraction_model_name: str = "gpt-5-mini"
 
+    # On-demand candidate scoring ("AI score top 20" etc.) -- gpt-5-mini by
+    # default (see services/llm/gpt5_provider.py score_candidate). Set
+    # LLM_SCORING_MODEL_NAME=gpt-5 in .env for the larger model.
+    llm_scoring_model_name: str = "gpt-5-mini"
+    # Only used to show AI costs in rupees.
+    usd_to_inr: float = 85.0
+
     embedding_provider: str = "openai"
     embedding_model_name: str = "text-embedding-3-large"
     embedding_api_key: str = ""

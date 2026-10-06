@@ -1,6 +1,7 @@
 .analytics-page { padding: var(--space-5) 0 var(--space-6); }
 .analytics-page h2 { font-size: var(--text-md); margin: 0 0 var(--space-4); }
 .analytics-section { margin-bottom: var(--space-5); }
+.analytics-count-pass { color: var(--color-pass); font-size: var(--text-sm); font-weight: 600; }
 
 .funnel-row {
   display: flex;
@@ -22,3 +23,6 @@
   .analytics-page { padding: var(--space-6) 0; }
   .funnel-label { width: 160px; }
 }
+
+.ai-usage-total { font-size: var(--text-lg); margin: 0 0 var(--space-3); }
+.ai-usage-sub { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }

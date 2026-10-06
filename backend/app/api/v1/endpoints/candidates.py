@@ -1,14 +1,15 @@
+import hashlib
 import logging
 import os
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func, String, cast
+from sqlalchemy import select, or_, and_, func, String, cast
 
 from app.api.deps import get_db, get_current_user
 from app.config import settings
@@ -21,6 +22,8 @@ from app.schemas.candidate import (
     CandidateCreate, CandidateOut, CandidateUpdate, SectorCount,
     ResumeSearchMatch, ResumeSearchResult,
     DuplicateMatch, DuplicateCheckResult,
+    UploadBatchResult, UploadFailure, CandidateIdsRequest, IngestionStatusRow,
+    CandidateOverview, FingerprintRequest, FingerprintMatch,
 )
 from app.services.extraction.text_router import extract_text
 from app.services.extraction.contact_hint import extract_email_hint, extract_phone_hint, normalize_phone
@@ -31,7 +34,79 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
-MAX_RESUME_BYTES = 5 * 1024 * 1024  # 5MB, enforced server-side (never trust the browser alone)
+MAX_RESUME_MB = 4
+MAX_RESUME_BYTES = MAX_RESUME_MB * 1024 * 1024  # enforced server-side too (never trust the browser alone)
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic"}
+# A resume sitting in queued/extracting/embedding longer than this almost
+# always means the Celery worker or Redis is down -- flagged as "stuck" on
+# the upload progress screen so the recruiter can retry it.
+STUCK_AFTER_MINUTES = 15
+
+
+def _resume_file_problem(filename: str, size: int) -> str | None:
+    """Plain-language reason a file can't be accepted as a resume, or None
+    if it's fine. Same rules the frontend pre-check applies."""
+    ext = Path(filename or "").suffix.lower()
+    if ext in IMAGE_EXTENSIONS:
+        return "Image file, not a resume document. Convert it to PDF and upload again"
+    if ext == ".doc":
+        return "Old Word format (.doc) is not supported. Save it as .docx or PDF"
+    if ext not in ALLOWED_EXTENSIONS:
+        return f"Unsupported file type ({ext or 'no extension'}). Only PDF and Word (.docx) are accepted"
+    if size == 0:
+        return "File is empty"
+    if size > MAX_RESUME_BYTES:
+        return f"File is {size / (1024 * 1024):.1f}MB; the limit is {MAX_RESUME_MB}MB"
+    return None
+
+
+IN_PROGRESS_STATUSES = ("queued", "extracting", "embedding")
+PROBLEM_STATUSES = ("failed", "needs_review")
+
+
+def _sha256(contents: bytes) -> str:
+    return hashlib.sha256(contents).hexdigest()
+
+
+def _stuck_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(minutes=STUCK_AFTER_MINUTES)
+
+
+def _stuck_condition(cutoff: datetime):
+    """In progress, but no status change since `cutoff` (worker/Redis down)."""
+    changed = func.coalesce(Candidate.status_updated_at, Candidate.added_on)
+    return and_(Candidate.status.in_(IN_PROGRESS_STATUSES), changed < cutoff)
+
+
+def _attention_condition(cutoff: datetime):
+    """Failed, needs review, or stuck -- everything a recruiter must act on."""
+    return or_(Candidate.status.in_(PROBLEM_STATUSES), _stuck_condition(cutoff))
+
+
+async def _find_by_fingerprint(db: AsyncSession, digest: str) -> Candidate | None:
+    result = await db.execute(
+        select(Candidate)
+        .where(Candidate.file_sha256 == digest, Candidate.deleted_at.is_(None))
+        .order_by(Candidate.added_on)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _annotate(db: AsyncSession, candidates: list[Candidate]) -> list[Candidate]:
+    """Fills the display-only fields on CandidateOut (`stuck`, and the name
+    of the candidate this one possibly duplicates) with one extra query."""
+    cutoff = _stuck_cutoff()
+    dup_ids = {c.possible_duplicate_of for c in candidates if c.possible_duplicate_of}
+    names: dict[uuid.UUID, str] = {}
+    if dup_ids:
+        res = await db.execute(select(Candidate.id, Candidate.name).where(Candidate.id.in_(dup_ids)))
+        names = {row.id: row.name for row in res.all()}
+    for c in candidates:
+        changed = c.status_updated_at or c.added_on
+        c.stuck = bool(c.status in IN_PROGRESS_STATUSES and changed and changed < cutoff)
+        c.possible_duplicate_of_name = names.get(c.possible_duplicate_of) if c.possible_duplicate_of else None
+    return candidates
 
 
 def _save_resume_file(candidate_id: uuid.UUID, filename: str, contents: bytes) -> str:
@@ -39,10 +114,9 @@ def _save_resume_file(candidate_id: uuid.UUID, filename: str, contents: bytes) -
     path. Shared by bulk-upload and the single-candidate (re)upload endpoint
     so there is exactly one place that decides how/where resumes are stored."""
     ext = Path(filename).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Unsupported file type: {filename}")
-    if len(contents) > MAX_RESUME_BYTES:
-        raise HTTPException(400, f"{filename} exceeds the 5MB resume size limit")
+    problem = _resume_file_problem(filename, len(contents))
+    if problem:
+        raise HTTPException(400, f"{filename}: {problem}")
 
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -127,30 +201,162 @@ async def bulk_upload_resumes(
         raise HTTPException(400, "sector must be 50 characters or fewer")
 
     created = []
-
     for file in files:
-        candidate_id = uuid.uuid4()
         contents = await file.read()
-        dest_path = _save_resume_file(candidate_id, file.filename, contents)
+        created.append(await _create_candidate_from_upload(db, file.filename, contents, job_id, pinned_sector))
+    return created
 
-        guessed_name = Path(file.filename).stem.replace("_", " ").replace("-", " ").title()
-        candidate = Candidate(
-            id=candidate_id, name=guessed_name, email=f"{candidate_id}@pending.local",
-            file_path=dest_path, status="queued", sector=pinned_sector,
-        )
-        db.add(candidate)
-        await db.flush()
 
-        if job_id:
-            db.add(Assessment(candidate_id=candidate.id, job_id=job_id, final_status="Pending Screening", screened=False))
+async def _create_candidate_from_upload(
+    db: AsyncSession,
+    filename: str,
+    contents: bytes,
+    job_id: uuid.UUID | None,
+    pinned_sector: str | None,
+) -> Candidate:
+    """Saves one resume file, creates its Candidate row (plus a Pending
+    Screening Assessment when uploaded against a job) and queues AI
+    processing. Raises HTTPException for an invalid file."""
+    candidate_id = uuid.uuid4()
+    dest_path = _save_resume_file(candidate_id, filename, contents)
+    digest = _sha256(contents)
 
+    guessed_name = Path(filename).stem.replace("_", " ").replace("-", " ").title()
+    candidate = Candidate(
+        id=candidate_id, name=guessed_name, email=f"{candidate_id}@pending.local",
+        file_path=dest_path, file_sha256=digest, status="queued", status_detail="",
+        status_updated_at=datetime.now(timezone.utc), sector=pinned_sector,
+    )
+    db.add(candidate)
+    await db.flush()
+
+    if job_id:
+        db.add(Assessment(candidate_id=candidate.id, job_id=job_id, final_status="Pending Screening", screened=False))
+
+    await db.commit()
+    await db.refresh(candidate)
+
+    try:
+        ingest_resume_task.delay(str(candidate.id), dest_path)
+    except Exception as exc:
+        # Redis/Celery unreachable: the file and candidate are saved, so mark
+        # it failed with a clear reason -- "Retry processing" re-queues it
+        # once the worker is back, with no re-upload needed.
+        logger.exception("Could not queue ingestion for %s", candidate.id)
+        candidate.status = "failed"
+        candidate.status_detail = f"Could not start AI processing (task queue unavailable: {type(exc).__name__})"
+        candidate.status_updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(candidate)
+    return candidate
 
-        ingest_resume_task.delay(str(candidate.id), dest_path)
-        created.append(candidate)
 
-    return created
+@router.post("/upload-batch", response_model=UploadBatchResult)
+async def upload_resume_batch(
+    files: list[UploadFile] = File(...),
+    job_id: uuid.UUID | None = Form(None),
+    sector: str | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Same as POST /candidates/upload, but built for large bulk uploads:
+    the frontend sends files in small batches (about 10 per request), and a
+    bad file -- wrong type, over the size limit, empty, unreadable -- is
+    reported back in `failed` with a reason instead of aborting the whole
+    request. Every good file in the batch is still saved and queued."""
+    if job_id:
+        job = await db.get(JobPosting, job_id)
+        if not job:
+            raise HTTPException(404, "Job posting not found")
+
+    pinned_sector = sector.strip() if sector and sector.strip() else None
+    if pinned_sector and len(pinned_sector) > 50:
+        raise HTTPException(400, "sector must be 50 characters or fewer")
+
+    created: list[Candidate] = []
+    failed: list[UploadFailure] = []
+    for file in files:
+        name = file.filename or "unnamed file"
+        try:
+            contents = await file.read()
+            problem = _resume_file_problem(name, len(contents))
+            if problem:
+                failed.append(UploadFailure(filename=name, reason=problem))
+                continue
+            existing = await _find_by_fingerprint(db, _sha256(contents))
+            if existing:
+                failed.append(UploadFailure(
+                    filename=name,
+                    reason=f"Exact copy of a resume already on file ({existing.name}), skipped",
+                ))
+                continue
+            created.append(await _create_candidate_from_upload(db, name, contents, job_id, pinned_sector))
+        except HTTPException as exc:
+            await db.rollback()
+            failed.append(UploadFailure(filename=name, reason=str(exc.detail)))
+        except Exception as exc:  # never let one file sink the batch
+            await db.rollback()
+            logger.exception("Bulk upload failed for %s", name)
+            failed.append(UploadFailure(filename=name, reason=f"Server error while saving: {type(exc).__name__}"))
+    return UploadBatchResult(created=created, failed=failed)
+
+
+@router.post("/ingestion-status", response_model=list[IngestionStatusRow])
+async def ingestion_status(
+    payload: CandidateIdsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Live AI-processing status for a set of candidates -- polled by the
+    bulk-upload progress screen. POST (not GET) because a 500-resume upload
+    means 500 ids, too long for a query string."""
+    if not payload.ids:
+        return []
+    result = await db.execute(select(Candidate).where(Candidate.id.in_(payload.ids)))
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_AFTER_MINUTES)
+    rows = []
+    for c in result.scalars().all():
+        changed = c.status_updated_at or c.added_on
+        in_progress = c.status in ("queued", "extracting", "embedding")
+        rows.append(IngestionStatusRow(
+            id=c.id,
+            name=c.name,
+            status=c.status,
+            status_detail=c.status_detail or "",
+            stuck=bool(in_progress and changed and changed < cutoff),
+            has_resume_file=bool(c.file_path),
+        ))
+    return rows
+
+
+@router.post("/reprocess")
+async def reprocess_candidates(
+    payload: CandidateIdsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Re-runs AI processing on resumes that are already saved -- for
+    failed / needs-review / stuck ones. No re-upload needed."""
+    queued = 0
+    skipped: list[str] = []
+    result = await db.execute(select(Candidate).where(Candidate.id.in_(payload.ids), Candidate.deleted_at.is_(None)))
+    for c in result.scalars().all():
+        if not c.file_path or not Path(c.file_path).exists():
+            skipped.append(str(c.id))
+            continue
+        c.status = "queued"
+        c.status_detail = ""
+        c.status_updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        try:
+            ingest_resume_task.delay(str(c.id), c.file_path)
+            queued += 1
+        except Exception as exc:
+            c.status = "failed"
+            c.status_detail = f"Could not start AI processing (task queue unavailable: {type(exc).__name__})"
+            await db.commit()
+            skipped.append(str(c.id))
+    return {"queued": queued, "skipped": skipped}
 
 
 @router.post("/check-duplicate", response_model=DuplicateCheckResult)
@@ -245,6 +451,8 @@ async def list_candidates(
     min_experience: float | None = None,
     max_experience: float | None = None,
     qualification: str | None = None,  # free-text match against education (degree/institution)
+    # attention | processing | unclassified | duplicates | ready | failed | needs_review
+    status: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -331,8 +539,76 @@ async def list_candidates(
         # makes "BSc" find a resume whose education field literally says
         # "Bachelor of Science".
         query = query.where(_qualification_condition(qualification.strip()))
+    if status:
+        cutoff = _stuck_cutoff()
+        if status == "attention":
+            query = query.where(_attention_condition(cutoff))
+        elif status == "processing":
+            query = query.where(Candidate.status.in_(IN_PROGRESS_STATUSES), ~_stuck_condition(cutoff))
+        elif status == "unclassified":
+            query = query.where(Candidate.sector.is_(None), Candidate.status == "ready")
+        elif status == "duplicates":
+            # both sides of every flagged pair, so they show next to each other
+            flagged_targets = select(Candidate.possible_duplicate_of).where(
+                Candidate.possible_duplicate_of.is_not(None), Candidate.deleted_at.is_(None)
+            )
+            query = query.where(or_(Candidate.possible_duplicate_of.is_not(None), Candidate.id.in_(flagged_targets)))
+            query = query.order_by(None).order_by(func.lower(Candidate.name), Candidate.added_on)
+        else:
+            query = query.where(Candidate.status == status)
     result = await db.execute(query)
-    return result.scalars().all()
+    return await _annotate(db, list(result.scalars().all()))
+
+
+@router.get("/overview", response_model=CandidateOverview)
+async def candidates_overview(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Counts behind the Candidates landing page. Every active candidate is
+    counted exactly once in classified / needs_attention / processing /
+    unclassified, so those four always add up to `total`."""
+    cutoff = _stuck_cutoff()
+    active = Candidate.deleted_at.is_(None)
+    attention = _attention_condition(cutoff)
+    processing = and_(Candidate.status.in_(IN_PROGRESS_STATUSES), ~_stuck_condition(cutoff))
+
+    async def count(*conds) -> int:
+        return (await db.execute(select(func.count(Candidate.id)).where(active, *conds))).scalar() or 0
+
+    total = await count()
+    needs_attention = await count(attention)
+    in_progress = await count(processing)
+    classified = await count(Candidate.sector.is_not(None), ~attention, ~processing)
+    unclassified = total - needs_attention - in_progress - classified
+    duplicates = await count(Candidate.possible_duplicate_of.is_not(None))
+    return CandidateOverview(
+        total=total, classified=classified, needs_attention=needs_attention,
+        processing=in_progress, unclassified=max(unclassified, 0), duplicates=duplicates,
+    )
+
+
+@router.post("/check-fingerprints", response_model=list[FingerprintMatch])
+async def check_fingerprints(
+    payload: FingerprintRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Which of these file fingerprints (SHA-256, computed in the browser)
+    already belong to an active candidate -- lets the upload screen skip
+    exact copies before sending anything."""
+    hashes = list({h.lower() for h in payload.hashes if h})[:2000]
+    if not hashes:
+        return []
+    result = await db.execute(
+        select(Candidate.file_sha256, Candidate.id, Candidate.name)
+        .where(Candidate.file_sha256.in_(hashes), Candidate.deleted_at.is_(None))
+        .order_by(Candidate.added_on)
+    )
+    seen: dict[str, FingerprintMatch] = {}
+    for digest, cid, name in result.all():
+        seen.setdefault(digest, FingerprintMatch(hash=digest, candidate_id=cid, name=name))
+    return list(seen.values())
 
 
 @router.get("/sectors/counts", response_model=list[SectorCount])
@@ -348,7 +624,13 @@ async def get_sector_counts(
     Candidates list."""
     query = (
         select(Candidate.sector, func.count(Candidate.id))
-        .where(Candidate.deleted_at.is_(None), Candidate.sector.is_not(None))
+        .where(
+            Candidate.deleted_at.is_(None),
+            Candidate.sector.is_not(None),
+            # counted on the "Needs attention" / "Processing" cards instead
+            ~_attention_condition(_stuck_cutoff()),
+            ~Candidate.status.in_(IN_PROGRESS_STATUSES),
+        )
         .group_by(Candidate.sector)
         .order_by(func.count(Candidate.id).desc())
     )
@@ -478,6 +760,8 @@ async def update_candidate(
         raise HTTPException(404, "Candidate not found")
 
     data = payload.model_dump(exclude_unset=True)
+    if data.pop("clear_duplicate", None):
+        candidate.possible_duplicate_of = None
     if "sector" in data and data["sector"] is not None:
         # VALID_SECTORS is the *suggested* list surfaced in the UI's
         # dropdown (and the only list GPT-5's own classification is allowed
@@ -511,6 +795,13 @@ async def delete_candidate(candidate_id: uuid.UUID, db: AsyncSession = Depends(g
     if not candidate or candidate.deleted_at is not None:
         raise HTTPException(404, "Candidate not found")
     candidate.deleted_at = datetime.now(timezone.utc)
+    # Deleting one side of a duplicate pair resolves the pair: whoever was
+    # flagged as a copy of this candidate (or this one, if it was the copy)
+    # no longer needs the "Possible duplicate" flag.
+    candidate.possible_duplicate_of = None
+    others = await db.execute(select(Candidate).where(Candidate.possible_duplicate_of == candidate.id))
+    for other in others.scalars().all():
+        other.possible_duplicate_of = None
     await db.commit()
 
 
@@ -561,7 +852,10 @@ async def upload_candidate_resume(
     _delete_resume_file(candidate.file_path)
 
     candidate.file_path = new_path
+    candidate.file_sha256 = _sha256(contents)
     candidate.status = "queued"  # same "needs (re)processing" state bulk upload sets
+    candidate.status_detail = ""
+    candidate.status_updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(candidate)
 

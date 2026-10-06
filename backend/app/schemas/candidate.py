@@ -25,6 +25,8 @@ class CandidateUpdate(BaseModel):
     All fields optional; only provided ones are applied."""
     sector: str | None = None
     position_role: str | None = None
+    # true = recruiter confirmed this is NOT a duplicate; clears the flag
+    clear_duplicate: bool | None = None
 
 
 class CandidateOut(BaseModel):
@@ -38,12 +40,65 @@ class CandidateOut(BaseModel):
     resume_summary: str
     file_path: str | None
     status: str
+    status_detail: str = ""
     added_on: datetime
     sector: str | None = None
     position_role: str | None = None
+    possible_duplicate_of: uuid.UUID | None = None
+    possible_duplicate_of_name: str | None = None
+    # true when queued/extracting/embedding for longer than 15 minutes
+    stuck: bool = False
 
     class Config:
         from_attributes = True
+
+
+# --- Bulk upload (batched, skip-don't-crash) ---
+
+class UploadFailure(BaseModel):
+    filename: str
+    reason: str
+
+
+class UploadBatchResult(BaseModel):
+    """POST /candidates/upload-batch -- one bad file never fails the
+    whole batch; it is reported in `failed` and the rest carry on."""
+    created: list[CandidateOut]
+    failed: list[UploadFailure]
+
+
+class CandidateIdsRequest(BaseModel):
+    ids: list[uuid.UUID]
+
+
+class CandidateOverview(BaseModel):
+    """Totals for the Candidates landing page, so the sector cards plus
+    the status cards always add up to the real number of resumes."""
+    total: int
+    classified: int        # has a sector -> appears on a sector card
+    needs_attention: int   # failed / needs_review / stuck
+    processing: int        # still queued / extracting / embedding (not stuck)
+    unclassified: int      # processed fine but no sector yet
+    duplicates: int        # flagged as a possible duplicate
+
+
+class FingerprintRequest(BaseModel):
+    hashes: list[str]
+
+
+class FingerprintMatch(BaseModel):
+    hash: str
+    candidate_id: uuid.UUID
+    name: str
+
+
+class IngestionStatusRow(BaseModel):
+    id: uuid.UUID
+    name: str
+    status: str            # queued | extracting | embedding | ready | needs_review | failed
+    status_detail: str
+    stuck: bool            # in progress for longer than STUCK_AFTER_MINUTES
+    has_resume_file: bool
 
 
 class SectorCount(BaseModel):

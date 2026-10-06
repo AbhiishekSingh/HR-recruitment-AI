@@ -118,7 +118,7 @@ export default function CandidateAssessmentsModal({ candidate: initialCandidate,
                     </Badge>
                     <span className="muted">
                       Score: <strong>{a.bucket === 'pending' ? a.ai_score ?? '—' : a.final_score ?? '—'}</strong>
-                      {a.bucket === 'pending' && a.ai_source === 'estimate' && ' (estimate)'}
+                      {a.bucket === 'pending' && (a.ai_source === 'ai_pipeline' ? ' (AI)' : ' (smart)')}
                     </span>
                     {a.stage && <Badge variant={stageBadgeVariant(a.stage)}>{a.stage}</Badge>}
                     {a.sent_to_client && <span className="muted">Sent to client</span>}

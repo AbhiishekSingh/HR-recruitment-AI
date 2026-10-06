@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, Float, func
+from sqlalchemy import String, DateTime, Float, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,6 +48,24 @@ class Candidate(Base):
     # queued | extracting | embedding | ready | failed | needs_review
     # ("ready" for now just means "usable in the pipeline" — real AI status
     # transitions get wired in when extraction/embedding work happens)
+
+    # Plain-language reason shown to the recruiter when status is
+    # needs_review / failed (e.g. "No readable text in this file").
+    status_detail: Mapped[str] = mapped_column(String(300), default="")
+    # When `status` last changed -- lets the upload progress screen flag a
+    # resume stuck in queued/extracting/embedding (worker or Redis down).
+    status_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # SHA-256 of the uploaded resume file -- an exact copy of a file already
+    # on file is skipped at upload time (no second candidate, no second AI
+    # charge). Null for candidates with no file.
+    file_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Set by ingestion when this candidate's extracted email/phone matches an
+    # earlier active candidate -- shown as "Possible duplicate of <name>".
+    # Cleared by the recruiter with "Not a duplicate".
+    possible_duplicate_of: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("candidates.id"), nullable=True, index=True
+    )
 
     added_on: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

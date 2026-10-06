@@ -1,4 +1,4 @@
-#!D:\React\HR-recruitment-AI\backend\venv\Scripts\python.exe
+#!D:\HR-recruitment-AI\backend\venv\Scripts\python.exe
 """Extract pdf structure in XML format"""
 import logging
 import os.path

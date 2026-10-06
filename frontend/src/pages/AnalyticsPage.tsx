@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getFunnel, getByRole } from '../api/analytics'
+import { getFunnel, getByRole, getAiUsage } from '../api/analytics'
 import { getDueFollowUps, getInvoiceStatus, formatDate, formatDateTime, formatMoney } from '../api/tracking'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
@@ -16,6 +16,9 @@ export default function AnalyticsPage() {
   const { data: dueFollowUps } = useQuery({ queryKey: ['dueFollowUps'], queryFn: () => getDueFollowUps(7) })
   const { data: invoiceRows } = useQuery({ queryKey: ['invoiceStatus'], queryFn: getInvoiceStatus })
   const [trackingId, setTrackingId] = useState<string | null>(null)
+  const [usageDays, setUsageDays] = useState(30)
+  const { data: usage } = useQuery({ queryKey: ['aiUsage', usageDays], queryFn: () => getAiUsage(usageDays) })
+  const inr = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
   const maxStage = funnel ? Math.max(...Object.values(funnel), 1) : 1
 
@@ -109,6 +112,67 @@ export default function AnalyticsPage() {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      <div className="card analytics-section">
+        <div className="row-between">
+          <h2>AI usage (exact)</h2>
+          <select value={usageDays} onChange={(e) => setUsageDays(Number(e.target.value))} aria-label="Period">
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+        </div>
+        {!usage && <p className="muted">Loading AI usage…</p>}
+        {usage && usage.calls === 0 && (
+          <EmptyState message="No AI calls recorded yet in this period. Costs appear here from the next resume upload, JD upload or AI score." />
+        )}
+        {usage && usage.calls > 0 && (
+          <>
+            <p className="ai-usage-total">
+              <strong>{inr(usage.total_inr)}</strong>{' '}
+              <span className="muted">(${usage.total_usd.toFixed(2)} · {usage.calls} AI calls · ₹{usage.usd_to_inr}/$)</span>
+            </p>
+            {usage.unpriced_calls > 0 && (
+              <p className="error-text">{usage.unpriced_calls} calls used a model missing from the price table, so they are not included in the total.</p>
+            )}
+            <div className="table-responsive">
+              <table className="table">
+                <thead><tr><th>Task</th><th>Calls</th><th>Tokens in / out</th><th>Cost</th></tr></thead>
+                <tbody>
+                  {usage.by_task.map((t) => (
+                    <tr key={t.task}>
+                      <td>{t.label}</td>
+                      <td>{t.calls}</td>
+                      <td className="muted">{t.input_tokens.toLocaleString('en-IN')} / {t.output_tokens.toLocaleString('en-IN')}</td>
+                      <td><strong>{inr(t.cost_inr)}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {usage.by_job.length > 0 && (
+              <>
+                <h3 className="ai-usage-sub">By job (JD reading + AI scoring)</h3>
+                <div className="table-responsive">
+                  <table className="table">
+                    <thead><tr><th>Job</th><th>Company</th><th>Calls</th><th>Cost</th></tr></thead>
+                    <tbody>
+                      {usage.by_job.map((j) => (
+                        <tr key={j.job_id}>
+                          <td>{j.title}</td>
+                          <td className="muted">{j.company}</td>
+                          <td>{j.calls}</td>
+                          <td><strong>{inr(j.cost_inr)}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </>
         )}
       </div>
 

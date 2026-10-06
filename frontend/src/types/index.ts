@@ -32,6 +32,56 @@ export interface JobPosting {
   required_skills: string[]
   status: string
   opened_on: string
+  raw_text: string
+  // Original JD file (PDF/DOCX) uploaded by HR, viewable via "View JD".
+  has_jd_file: boolean
+  jd_file_name: string | null
+  // Scoring settings in use (saved ones, or the automatic default).
+  skill_groups: SkillGroup[]
+  related_titles: string[]
+  /** false = automatic groups built from required skills (not yet edited) */
+  has_custom_groups: boolean
+}
+
+/** One scoring group: any one of its skills (or synonyms) in a resume counts
+ *  as the whole group matched. "soft" groups are not scored. */
+export interface SkillGroup {
+  name: string
+  type: 'must' | 'nice' | 'soft'
+  skills: string[]
+  synonyms: string[]
+}
+
+/** Values the AI read from an uploaded JD file. null / [] = not in the JD. */
+export interface JDFormFields {
+  title: string | null
+  locations: string[]
+  budget_min: number | null
+  budget_max: number | null
+  experience_min: number | null
+  experience_max: number | null
+  max_notice_days: number | null
+  required_skills: string[]
+  nice_to_have_skills: string[]
+  skill_groups: SkillGroup[]
+  related_titles: string[]
+}
+
+export interface JDParseResult {
+  upload_token: string | null
+  file_name: string
+  fields: JDFormFields
+  /** form fields the JD didn't provide -- highlighted for HR to fill */
+  missing: string[]
+  requirements: Record<string, unknown>
+  raw_text: string
+  /** set when the AI couldn't read the file -- fill the form manually */
+  error: string | null
+}
+
+export interface JDAttachResult {
+  job: JobPosting
+  parse: JDParseResult
 }
 
 export interface Candidate {
@@ -45,12 +95,39 @@ export interface Candidate {
   resume_summary: string
   file_path: string | null
   status: string // queued | extracting | embedding | ready | failed | needs_review
+  // Plain-language reason when status is needs_review / failed.
+  status_detail: string
   added_on: string
   // Auto-classified from the candidate's most recent resume job during
   // ingestion (or set manually via PATCH /candidates/{id}). Null until a
   // resume has been processed, or if extraction hasn't run yet.
   sector: string | null
   position_role: string | null
+  // Set when this candidate's email/phone (or exact file) matches an
+  // earlier candidate -- shown as "Possible duplicate of <name>".
+  possible_duplicate_of: string | null
+  possible_duplicate_of_name: string | null
+  // In progress for 15+ minutes (worker/Redis probably down).
+  stuck: boolean
+}
+
+/** GET /candidates/overview -- classified + needs_attention + processing +
+ *  unclassified always add up to total. */
+export interface CandidateOverview {
+  total: number
+  classified: number
+  needs_attention: number
+  processing: number
+  unclassified: number
+  duplicates: number
+}
+
+export type CandidateStatusFilter = 'attention' | 'processing' | 'unclassified' | 'duplicates'
+
+export interface FingerprintMatch {
+  hash: string
+  candidate_id: string
+  name: string
 }
 
 // Mirrors the backend's fixed sector allow-list (validation.py's
@@ -67,6 +144,30 @@ export const SECTOR_LIST = [
   'Media & Entertainment', 'Government & Public Sector', 'Agriculture',
   'Other',
 ] as const
+
+// --- Bulk resume upload (batched, with per-file results) ---
+
+/** Mirrors the backend limit in candidates.py (MAX_RESUME_MB). */
+export const MAX_RESUME_MB = 4
+
+export interface UploadFailure {
+  filename: string
+  reason: string
+}
+
+export interface UploadBatchResult {
+  created: Candidate[]
+  failed: UploadFailure[]
+}
+
+export interface IngestionStatusRow {
+  id: string
+  name: string
+  status: string // queued | extracting | embedding | ready | needs_review | failed
+  status_detail: string
+  stuck: boolean
+  has_resume_file: boolean
+}
 
 export interface SectorCount {
   sector: string
@@ -164,17 +265,75 @@ export interface AssessmentScored {
   created_at: string
   // computed, not stored input:
   ai_score: number | null
-  // "ai_pipeline" = real GPT-5 match score; "estimate" = matching hasn't
-  // run yet for this candidate/job pair, this is the keyword-overlap
-  // fallback. null only for the legacy case where no ai score exists at all.
-  ai_source: 'ai_pipeline' | 'estimate' | null
+  // "ai_pipeline" = up-to-date AI score; "smart" = free smart score (no AI
+  // call); "processing" = resume not processed yet.
+  ai_source: 'ai_pipeline' | 'smart' | 'processing' | null
   matched_skills: string[]
   missing_skills: string[]
+  // Free smart score -- always present -- with its breakdown and evidence.
+  smart_score: number | null
+  score_parts: ScorePart[]
+  skill_evidence: SkillEvidence[]
+  /** an AI score exists but the job settings or resume changed since */
+  ai_stale: boolean
+  ai_previous_score: number | null
+  ai_strengths: string[]
+  ai_gaps: string[]
+  ai_recommendation: string | null
   assessment_score: number | null
   final_score: number | null
   bucket: 'strong' | 'good' | 'weak' | 'notrec' | 'rejected' | 'pending'
   flags: Array<{ level: string; text: string }>
   adjustments: Array<{ text: string; value: number | null }>
+}
+
+export interface ScorePart {
+  key: string
+  label: string
+  weight: number
+  /** 0-100, or null when there's no data for this part (left out of the score) */
+  value: number | null
+  detail: string
+}
+
+export interface SkillEvidence {
+  group: string
+  type: 'must' | 'nice' | 'soft'
+  /** null for soft groups (not scored) */
+  matched: boolean | null
+  found: string | null
+  where: 'skills' | 'resume' | null
+}
+
+export interface AIScoreRequest {
+  mode: 'top' | 'above' | 'selected' | 'stale'
+  count?: number
+  min_score?: number
+  candidate_ids?: string[]
+  dry_run: boolean
+}
+
+export interface AIScoreResponse {
+  to_score: number
+  already_done: number
+  not_ready: number
+  candidate_ids: string[]
+  cost_per_candidate_inr: number
+  estimated_cost_inr: number
+  estimated_cost_usd: number
+  queued: boolean
+}
+
+export interface AIUsageReport {
+  days: number
+  usd_to_inr: number
+  calls: number
+  unpriced_calls: number
+  total_usd: number
+  total_inr: number
+  by_task: { task: string; label: string; calls: number; cost_usd: number; cost_inr: number; input_tokens: number; output_tokens: number }[]
+  by_job: { job_id: string; title: string; company: string; calls: number; cost_inr: number }[]
+  by_day: { date: string; cost_inr: number }[]
 }
 
 export const BUCKET_LABELS: Record<string, string> = {

@@ -34,6 +34,16 @@ class JobPosting(Base):
     requirements: Mapped[dict] = mapped_column(JSONB, default=dict)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
 
+    # Skill groups (must / nice / not scored, with per-job synonyms) and
+    # related job titles used by the free smart score and the AI scorer --
+    # see services/scoring/job_config.py. {} = use the automatic default.
+    scoring_config: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    # Original JD file (PDF/DOCX) uploaded by HR -- viewable from the roles
+    # table and pipeline page. Null when the job was typed in by hand.
+    jd_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    jd_file_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
     opened_on: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     target_close: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -42,3 +52,25 @@ class JobPosting(Base):
     # deleted_at is only for "this job shouldn't have existed" cases, so
     # assessments/match_results tied to it stay intact for audit purposes.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    @property
+    def has_jd_file(self) -> bool:
+        return bool(self.jd_file_path)
+
+    # --- scoring settings actually in use (saved, or automatic default) ---
+    @property
+    def _effective_scoring(self) -> dict:
+        from app.services.scoring.job_config import effective_config
+        return effective_config(self)
+
+    @property
+    def skill_groups(self) -> list[dict]:
+        return self._effective_scoring["skill_groups"]
+
+    @property
+    def related_titles(self) -> list[str]:
+        return self._effective_scoring["related_titles"]
+
+    @property
+    def has_custom_groups(self) -> bool:
+        return not self._effective_scoring["is_default"]

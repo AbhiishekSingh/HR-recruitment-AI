@@ -66,3 +66,24 @@
 .success-text {
   color: #1a7f37;
 }
+/* Status filter banner (from the status cards on the Categories page) */
+.status-filter-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.status-detail {
+  font-size: var(--text-xs);
+  max-width: 220px;
+  margin-top: 4px;
+}
+.status-actions { gap: var(--space-3); margin-top: 4px; }
+.status-delete { color: var(--color-pass); }
+.duplicate-flag {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--color-review);
+}

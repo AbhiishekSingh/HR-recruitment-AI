@@ -1,0 +1,543 @@
+{
+  "_readme": "Global synonyms used by the Candidates search box AND the free candidate scoring. Each key is the canonical name; its list holds other spellings/abbreviations that mean the same thing. Case, spaces, dots and hyphens are ignored automatically (PowerBI = Power BI = power-bi), so only add genuinely different words. Keep groups strict: only true equivalents, never 'related' skills (Excel is NOT Power BI). Restart the backend after editing. Per-job synonyms are edited in the app (Edit job), not here.",
+  "skills": {
+    "SQL": [
+      "t-sql",
+      "tsql",
+      "ms sql",
+      "mssql",
+      "ms sql server",
+      "sql server",
+      "microsoft sql server",
+      "pl/sql",
+      "plsql",
+      "structured query language"
+    ],
+    "MySQL": [
+      "my sql"
+    ],
+    "PostgreSQL": [
+      "postgres",
+      "psql"
+    ],
+    "Oracle Database": [
+      "oracle db",
+      "oracle sql",
+      "oracle rdbms"
+    ],
+    "MongoDB": [
+      "mongo"
+    ],
+    "Stored Procedures": [
+      "stored procedure",
+      "sp",
+      "sprocs",
+      "stored procs"
+    ],
+    "CTEs": [
+      "cte",
+      "common table expressions",
+      "common table expression"
+    ],
+    "Window Functions": [
+      "window function",
+      "analytic functions",
+      "analytical functions",
+      "over partition by"
+    ],
+    "Query Optimization": [
+      "query optimisation",
+      "query tuning",
+      "sql tuning",
+      "sql performance tuning",
+      "query performance tuning",
+      "performance tuning"
+    ],
+    "Power BI": [
+      "powerbi",
+      "ms power bi",
+      "microsoft power bi",
+      "power bi desktop",
+      "power bi service"
+    ],
+    "Tableau": [
+      "tableau desktop",
+      "tableau server",
+      "tableau public"
+    ],
+    "Looker": [
+      "looker studio",
+      "google data studio",
+      "data studio"
+    ],
+    "Qlik": [
+      "qlikview",
+      "qlik sense",
+      "qliksense"
+    ],
+    "SSRS": [
+      "sql server reporting services"
+    ],
+    "SSIS": [
+      "sql server integration services"
+    ],
+    "SSAS": [
+      "sql server analysis services"
+    ],
+    "Azure Data Factory": [
+      "adf",
+      "azure df",
+      "data factory",
+      "azure data factory v2",
+      "adf v2"
+    ],
+    "Azure Synapse": [
+      "synapse",
+      "azure synapse analytics",
+      "synapse analytics"
+    ],
+    "Azure Databricks": [
+      "databricks"
+    ],
+    "Microsoft Azure": [
+      "azure",
+      "ms azure"
+    ],
+    "ETL": [
+      "extract transform load",
+      "etl pipelines",
+      "etl development"
+    ],
+    "ELT": [
+      "extract load transform"
+    ],
+    "Data Pipelines": [
+      "data pipeline",
+      "data pipeline development",
+      "pipeline development"
+    ],
+    "Data Warehousing": [
+      "data warehouse",
+      "dwh",
+      "edw",
+      "enterprise data warehouse"
+    ],
+    "Data Modeling": [
+      "data modelling",
+      "dimensional modeling",
+      "dimensional modelling",
+      "star schema",
+      "snowflake schema"
+    ],
+    "Snowflake": [
+      "snowflake data cloud",
+      "snowflake db"
+    ],
+    "Apache Airflow": [
+      "airflow"
+    ],
+    "Apache Spark": [
+      "spark"
+    ],
+    "PySpark": [
+      "py spark"
+    ],
+    "Apache Kafka": [
+      "kafka"
+    ],
+    "SQL Server Agent": [
+      "sql agent",
+      "sql server agent jobs"
+    ],
+    "Microsoft Excel": [
+      "excel",
+      "ms excel",
+      "advanced excel"
+    ],
+    "Python": [
+      "python3",
+      "python 3"
+    ],
+    "Pandas": [],
+    "R": [
+      "r programming",
+      "r language"
+    ],
+    "Java": [
+      "core java",
+      "java se",
+      "j2se"
+    ],
+    "Spring Boot": [
+      "springboot",
+      "spring-boot"
+    ],
+    "React": [
+      "reactjs",
+      "react.js",
+      "react js"
+    ],
+    "Node.js": [
+      "node",
+      "nodejs",
+      "node js"
+    ],
+    "JavaScript": [
+      "js",
+      "ecmascript",
+      "es6"
+    ],
+    "TypeScript": [
+      "ts"
+    ],
+    "Next.js": [
+      "nextjs",
+      "next js"
+    ],
+    "Vue.js": [
+      "vuejs",
+      "vue js",
+      "vue"
+    ],
+    "Angular": [
+      "angularjs",
+      "angular.js"
+    ],
+    "HTML": [
+      "html5"
+    ],
+    "CSS": [
+      "css3"
+    ],
+    ".NET": [
+      "dotnet",
+      "dot net",
+      "asp.net",
+      "asp net"
+    ],
+    "C#": [
+      "csharp",
+      "c sharp"
+    ],
+    "C++": [
+      "cpp"
+    ],
+    "Amazon Web Services": [
+      "aws"
+    ],
+    "Google Cloud Platform": [
+      "gcp",
+      "google cloud"
+    ],
+    "Kubernetes": [
+      "k8s"
+    ],
+    "Docker": [
+      "docker containers",
+      "docker compose"
+    ],
+    "CI/CD": [
+      "cicd",
+      "ci cd",
+      "continuous integration",
+      "continuous delivery"
+    ],
+    "Git": [
+      "github",
+      "gitlab",
+      "bitbucket"
+    ],
+    "Machine Learning": [
+      "ml"
+    ],
+    "Artificial Intelligence": [
+      "ai"
+    ],
+    "Natural Language Processing": [
+      "nlp"
+    ],
+    "Search Engine Optimization": [
+      "seo"
+    ],
+    "Search Engine Marketing": [
+      "sem",
+      "google ads",
+      "ppc"
+    ],
+    "Customer Relationship Management": [
+      "crm"
+    ],
+    "Salesforce": [
+      "sfdc",
+      "salesforce crm"
+    ],
+    "Enterprise Resource Planning": [
+      "erp"
+    ],
+    "SAP": [
+      "sap erp",
+      "sap s/4hana",
+      "s4 hana"
+    ],
+    "Tally": [
+      "tally erp",
+      "tally erp 9",
+      "tally prime"
+    ],
+    "GST": [
+      "goods and services tax",
+      "gst filing",
+      "gst returns"
+    ],
+    "Talent Acquisition": [
+      "recruitment",
+      "recruiting",
+      "hiring",
+      "end to end recruitment",
+      "full cycle recruitment",
+      "full-cycle recruitment"
+    ],
+    "Sourcing": [
+      "candidate sourcing",
+      "talent sourcing",
+      "headhunting"
+    ],
+    "Naukri": [
+      "naukri.com",
+      "naukri rms",
+      "resdex"
+    ],
+    "LinkedIn Recruiter": [
+      "linkedin recruiting",
+      "linkedin sourcing"
+    ],
+    "Payroll": [
+      "payroll processing",
+      "payroll management"
+    ],
+    "Onboarding": [
+      "employee onboarding",
+      "joining formalities"
+    ],
+    "Human Resources": [
+      "hr"
+    ],
+    "Business Analysis": [
+      "business analyst",
+      "ba"
+    ],
+    "Data Analysis": [
+      "data analytics",
+      "analytics",
+      "data analyst"
+    ],
+    "Dashboards": [
+      "dashboarding",
+      "dashboard development",
+      "kpi dashboards",
+      "kpi reports",
+      "reporting dashboards"
+    ],
+    "Data Visualization": [
+      "data visualisation",
+      "visualization",
+      "visualisation"
+    ],
+    "Data Governance": [
+      "data quality",
+      "data quality management"
+    ]
+  },
+  "qualifications": {
+    "Bachelor of Science": [
+      "bsc",
+      "b sc",
+      "b.sc",
+      "b.sc."
+    ],
+    "Bachelor of Technology": [
+      "btech",
+      "b tech",
+      "b.tech",
+      "b.tech.",
+      "bachelor of engineering",
+      "be",
+      "b.e",
+      "b.e."
+    ],
+    "Bachelor of Commerce": [
+      "bcom",
+      "b com",
+      "b.com",
+      "b.com."
+    ],
+    "Bachelor of Arts": [
+      "ba",
+      "b.a",
+      "b.a.",
+      "bachelor's in arts"
+    ],
+    "Bachelor of Business Administration": [
+      "bba",
+      "b.b.a"
+    ],
+    "Bachelor of Computer Applications": [
+      "bca",
+      "b.c.a"
+    ],
+    "Master of Science": [
+      "msc",
+      "m sc",
+      "m.sc",
+      "m.sc."
+    ],
+    "Master of Technology": [
+      "mtech",
+      "m tech",
+      "m.tech",
+      "m.tech.",
+      "master of engineering",
+      "me",
+      "m.e",
+      "m.e."
+    ],
+    "Master of Business Administration": [
+      "mba",
+      "m.b.a"
+    ],
+    "Master of Computer Applications": [
+      "mca",
+      "m.c.a"
+    ],
+    "Master of Commerce": [
+      "mcom",
+      "m com",
+      "m.com",
+      "m.com."
+    ],
+    "Master of Arts": [
+      "ma",
+      "m.a",
+      "m.a."
+    ],
+    "Doctor of Philosophy": [
+      "phd",
+      "ph d",
+      "ph.d",
+      "ph.d."
+    ],
+    "Diploma": [],
+    "Higher Secondary": [
+      "12th",
+      "hsc",
+      "intermediate",
+      "senior secondary"
+    ],
+    "Secondary School": [
+      "10th",
+      "ssc",
+      "matriculation"
+    ]
+  },
+  "_families_readme": "Used only when a job has no skill groups yet (older jobs, or a job typed in by hand): required skills that belong to the same family are put into ONE must-have group, so e.g. SQL + Stored Procedures + CTEs count once, not five times.",
+  "families": {
+    "SQL & query work": [
+      "SQL",
+      "Stored Procedures",
+      "CTEs",
+      "Window Functions",
+      "Query Optimization",
+      "MySQL",
+      "PostgreSQL",
+      "Oracle Database"
+    ],
+    "BI / dashboard tools": [
+      "Tableau",
+      "Power BI",
+      "Looker",
+      "Qlik",
+      "SSRS"
+    ],
+    "ETL / data pipelines": [
+      "ETL",
+      "ELT",
+      "Data Pipelines",
+      "Azure Data Factory",
+      "SSIS",
+      "Apache Airflow"
+    ],
+    "Front-end": [
+      "React",
+      "Angular",
+      "Vue.js",
+      "Next.js",
+      "HTML",
+      "CSS"
+    ],
+    "Recruitment": [
+      "Talent Acquisition",
+      "Sourcing",
+      "Naukri",
+      "LinkedIn Recruiter"
+    ]
+  },
+  "_soft_skills_readme": "Skills treated as 'Not scored' by default (checked in the screening call instead): resumes rarely list them, so scoring them only lowers everyone's score.",
+  "soft_skills": [
+    "communication",
+    "communication skills",
+    "verbal communication",
+    "written communication",
+    "stakeholder management",
+    "stakeholder communication",
+    "teamwork",
+    "team player",
+    "leadership",
+    "problem solving",
+    "problem-solving",
+    "analytical thinking",
+    "critical thinking",
+    "interpersonal skills",
+    "time management",
+    "negotiation",
+    "presentation skills",
+    "attention to detail",
+    "adaptability",
+    "collaboration",
+    "ownership",
+    "self-motivated",
+    "multitasking",
+    "customer focus"
+  ],
+  "_seniority_readme": "Words ignored when comparing job titles (so 'Senior Data Analyst' and 'Data Analyst' count as the same role).",
+  "seniority_words": [
+    "senior",
+    "sr",
+    "junior",
+    "jr",
+    "lead",
+    "principal",
+    "associate",
+    "trainee",
+    "intern",
+    "head",
+    "chief",
+    "assistant",
+    "deputy",
+    "i",
+    "ii",
+    "iii",
+    "iv",
+    "level",
+    "grade",
+    "staff",
+    "and",
+    "&",
+    "of",
+    "the",
+    "a",
+    "an",
+    "for",
+    "in",
+    "with"
+  ]
+}

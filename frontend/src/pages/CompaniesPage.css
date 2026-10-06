@@ -17,3 +17,14 @@
 @media (min-width: 600px) {
   .companies-page { padding: var(--space-6) 0; }
 }
+
+/* JD file links in the roles table */
+.jd-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: 2px;
+  font-size: var(--text-sm);
+}
+.jd-attach-label { cursor: pointer; }
+.jd-attach-label.is-busy { cursor: progress; text-decoration: none; }

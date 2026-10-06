@@ -90,9 +90,21 @@ class AssessmentScored(AssessmentOut):
     # "estimate" = matching hasn't run yet and this is the cheap keyword-
     # overlap fallback. Lets the frontend label the score honestly instead
     # of parsing the "rough estimate" text out of `flags`.
+    # "ai_pipeline" = an up-to-date AI score; "smart" = the free smart
+    # score (no AI call); "processing" = resume not processed yet.
     ai_source: str | None = None
     matched_skills: list[str] = []
     missing_skills: list[str] = []
+    # Free smart score, always present, with its breakdown and evidence.
+    smart_score: int | None = None
+    score_parts: list[dict] = []
+    skill_evidence: list[dict] = []
+    # An AI score exists but job settings or resume changed since.
+    ai_stale: bool = False
+    ai_previous_score: int | None = None
+    ai_strengths: list[str] = []
+    ai_gaps: list[str] = []
+    ai_recommendation: str | None = None
     assessment_score: int | None = None
     final_score: int | None = None
     bucket: str

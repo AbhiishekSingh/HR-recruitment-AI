@@ -3,6 +3,7 @@ from openai import AsyncOpenAI
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
+from app.services import ai_usage
 from app.services.embeddings.base import EmbeddingProvider
 
 REQUEST_TIMEOUT_SECONDS = 60
@@ -35,6 +36,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     )
     async def embed(self, texts: list[str]) -> list[list[float]]:
         response = await self.client.embeddings.create(model=self.model, input=texts)
+        await ai_usage.record("embedding", self.model, getattr(response, "usage", None))
         return [item.embedding for item in response.data]
 
     @property

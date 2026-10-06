@@ -1,19 +1,21 @@
 """
 Scoring engine for the ATS pipeline.
 
-The real GPT-5 matching pipeline (services/llm/, services/embeddings/,
-services/search/hybrid_search.py, workers/tasks_matching.py) writes its
-results into `match_results`. `compute_final_score()` now reads that table
-first — pass in the MatchResult row for this (job, candidate) pair as
-`match_result` and it's used directly, with a sanity check against the LLM's
-own stated matched/missing skills.
+Score used for a candidate in a job ("ai" in compute_final_score):
+  * an up-to-date on-demand AI score (MatchResult row whose
+    requirements_hash matches the job's current settings + the resume), or
+  * otherwise the free smart score (services/scoring/smart_score.py: skill
+    groups with synonyms, meaning match, experience, title, nice-to-have).
+An AI score that no longer matches (job edited / resume replaced) is shown
+as out of date until HR re-scores it.
 
-`ai_match_score()` (pure keyword overlap + experience-band fit) is kept only
-as a fallback for the window before the AI pipeline has scored a given pair
-yet (job just created, matching not run, or this candidate wasn't in the
-top-K). It's flagged as an estimate whenever it's used, so a recruiter never
-mistakes it for a real GPT-5 score.
+Final score = 60% that score + 40% the recruiter's screening assessment.
+ai_match_score() below is the old word-for-word estimate, kept only for
+reference -- nothing calls it any more.
 """
+
+from app.services.scoring.job_config import effective_config, profile_version, scoring_hash
+from app.services.scoring.smart_score import smart_score
 
 ENUM_MAPS = {
     "strong_partial_low": {"Strong": 100, "Partial": 60, "Low": 20},
@@ -167,48 +169,71 @@ def apply_hard_filters(job, a) -> dict:
     return {"flags": flags, "hard_reject": hard_reject}
 
 
-def compute_final_score(job, candidate, a, match_result=None, candidate_profile=None) -> dict:
-    """job = JobPosting ORM row, candidate = Candidate ORM row, a = Assessment
-    ORM row, match_result = MatchResult ORM row for this (job, candidate)
-    pair if the AI pipeline has scored it, else None. candidate_profile =
-    CandidateProfile ORM row (the GPT-5 extracted skills/experience) if
-    ingestion has completed for this candidate, else None.
+def candidate_titles(candidate, candidate_profile) -> list[str]:
+    """Most recent job titles we know for the candidate (for title relevance)."""
+    titles: list[str] = []
+    for t in (getattr(candidate_profile, "position_role", None), getattr(candidate, "position_role", None)):
+        if t:
+            titles.append(t)
+    history = getattr(candidate_profile, "work_history", None) or []
+    if isinstance(history, list):
+        for w in history[:3]:
+            if isinstance(w, dict):
+                t = w.get("role") or w.get("title") or w.get("designation")
+                if isinstance(t, str) and t.strip():
+                    titles.append(t.strip())
+    return titles
 
-    AI involvement stops at `ai` below — score/matched/missing skills only.
-    Nothing here lets the AI set final_status or bucket on its own; that
-    stays a human decision (see apply_hard_filters/final_status handling)."""
-    if match_result is not None:
+
+def compute_final_score(job, candidate, a, match_result=None, candidate_profile=None,
+                        config: dict | None = None, similarity: float | None = None) -> dict:
+    """job = JobPosting, candidate = Candidate, a = Assessment, match_result =
+    this pair's MatchResult (an on-demand AI score) if one exists,
+    candidate_profile = the AI-extracted resume data, config = the job's
+    effective scoring settings, similarity = JD-vs-resume embedding cosine.
+
+    The score used ("ai") is the AI score when it is UP TO DATE (same job
+    settings + same resume as when it was scored), otherwise the free smart
+    score. An older AI score is reported as ai_stale so HR can re-score.
+
+    AI involvement stops at `ai` below. Nothing here lets the AI set
+    final_status or bucket on its own; that stays a human decision."""
+    config = config or effective_config(job)
+    if candidate_profile is not None:
+        skills_source = candidate_profile.skills or []
+        text_source = candidate_profile.raw_text or ""
+        years = candidate_profile.total_experience_years
+        if years is None:
+            years = candidate.experience_years
+    else:
+        skills_source = candidate.resume_skills or []
+        text_source = candidate.resume_summary or ""
+        years = candidate.experience_years
+    smart = smart_score(
+        job=job, config=config, skills=skills_source, full_text=text_source,
+        experience_years=years, candidate_titles=candidate_titles(candidate, candidate_profile),
+        similarity=similarity,
+    )
+
+    ai_fresh = (
+        match_result is not None and candidate_profile is not None
+        and match_result.requirements_hash == scoring_hash(job, config, profile_version(candidate_profile))
+    )
+    ai_stale = match_result is not None and not ai_fresh
+    if ai_fresh:
         ai = _from_match_result(match_result)
     else:
-        # AI pipeline hasn't scored this (job, candidate) pair yet — use the
-        # cheap keyword-overlap estimate so the pipeline view isn't blank,
-        # clearly flagged as such below.
-        #
-        # Prefer CandidateProfile (skills/experience GPT-5 actually
-        # extracted from the resume) over Candidate.resume_skills/
-        # experience_years. Those Candidate-level fields are what a bulk
-        # resume upload or the ingestion pipeline populate; a candidate
-        # uploaded that way never has resume_skills/experience_years set on
-        # the Candidate row itself, so estimating from those fields for
-        # anyone who came in through the ATS's own upload flow means the
-        # skill/experience match is silently computed against empty data
-        # (0 skills, 0 years) even once the real resume has been parsed.
-        # Candidate.resume_skills/experience_years are only the right
-        # source for a candidate manually entered with no resume at all.
-        if candidate_profile is not None:
-            skills_source = candidate_profile.skills or []
-            experience_source = candidate_profile.total_experience_years or 0
-        else:
-            skills_source = candidate.resume_skills
-            experience_source = candidate.experience_years
+        ai = {
+            "score": smart["score"],
+            "matched_skills": smart["matched_skills"],
+            "missing_skills": smart["missing_skills"],
+            "source": "processing" if candidate.status in ("queued", "extracting", "embedding") else "smart",
+        }
 
-        ai = ai_match_score(
-            job.required_skills, skills_source,
-            experience_source, job.experience_min, job.experience_max,
-        )
-
-    ai_flags = sanity_check_ai_score(ai)
-    if ai.get("source") == "estimate":
+    ai_flags = sanity_check_ai_score(ai) + [f for f in smart["flags"] if f["level"] == "warn"]
+    if ai_stale:
+        ai_flags.append({"level": "info", "text": f"AI score {match_result.score} is out of date (job settings or resume changed) — smart score shown. Re-score to update."})
+    if ai.get("source") != "ai_pipeline":
         if candidate.status in ("queued", "extracting", "embedding"):
             # The resume upload itself hasn't finished processing yet -- a
             # 0-skills estimate here means "no data yet", not "no match".
@@ -219,11 +244,12 @@ def compute_final_score(job, candidate, a, match_result=None, candidate_profile=
             ai_flags.append({"level": "warn", "text": "Resume text extraction failed — this candidate needs manual review before an AI estimate is meaningful."})
         elif candidate.status == "failed":
             ai_flags.append({"level": "warn", "text": "Resume processing failed after retries — this candidate needs manual review."})
-        else:
-            ai_flags.append({"level": "info", "text": "AI score is a rough estimate — GPT-5 matching hasn't run for this candidate/job pair yet."})
+
+    extra = {"smart": smart, "ai_stale": ai_stale, "ai_previous_score": match_result.score if ai_stale else None}
 
     if not a.screened:
         return {
+            **extra,
             "ai": ai, "assessment": None,
             "flags": ai_flags + [{"level": "warn", "text": "Awaiting recruiter screening — no assessment on file yet."}],
             "hard_reject": False, "adjustments": [], "final": None, "bucket": "pending",
@@ -265,7 +291,7 @@ def compute_final_score(job, candidate, a, match_result=None, candidate_profile=
     else:
         bucket = "notrec"
 
-    return {"ai": ai, "assessment": assessment, "flags": flags, "hard_reject": hard_reject,
+    return {**extra, "ai": ai, "assessment": assessment, "flags": flags, "hard_reject": hard_reject,
             "adjustments": adjustments, "final": final, "bucket": bucket}
 
 

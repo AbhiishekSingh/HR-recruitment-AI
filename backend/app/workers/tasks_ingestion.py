@@ -1,5 +1,8 @@
 import asyncio
 import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import select, func, or_
 
 from app.workers.celery_app import celery_app
 from app.db.session import AsyncSessionLocal
@@ -10,6 +13,8 @@ from app.services.embeddings.factory import get_embedding_provider
 from app.models.candidate import Candidate
 from app.models.candidate_profile import CandidateProfile
 from app.models.candidate_embedding import CandidateEmbedding
+from app.services.extraction.contact_hint import normalize_phone
+from app.services import ai_usage
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -25,16 +30,26 @@ def ingest_resume_task(self, candidate_id: str, file_path: str):
             # ("extracting"/"embedding") forever, with nothing in the UI
             # telling the recruiter it's dead -- surface it as "failed"
             # instead so it's visible and actionable.
-            asyncio.run(_mark_status(candidate_id, "failed"))
+            reason = f"AI processing failed after {self.max_retries} retries: {type(exc).__name__}"
+            asyncio.run(_mark_status(candidate_id, "failed", reason))
             raise
         raise self.retry(exc=exc, countdown=2 ** self.request.retries)
 
 
-async def _mark_status(candidate_id: str, status: str) -> None:
+def _set_status(candidate: Candidate, status: str, detail: str = "") -> None:
+    """Single place that changes a candidate's ingestion status, so the
+    reason (status_detail) and timestamp (status_updated_at) shown on the
+    bulk-upload progress screen always stay in step with it."""
+    candidate.status = status
+    candidate.status_detail = detail[:300]
+    candidate.status_updated_at = datetime.now(timezone.utc)
+
+
+async def _mark_status(candidate_id: str, status: str, detail: str = "") -> None:
     async with AsyncSessionLocal() as db:
         candidate = await db.get(Candidate, uuid.UUID(candidate_id))
         if candidate:
-            candidate.status = status
+            _set_status(candidate, status, detail)
             await db.commit()
 
 
@@ -53,7 +68,10 @@ async def _ingest_resume(candidate_id: str, file_path: str):
     # "queued" forever).
     providers_to_close: list = []
     try:
-        await _do_ingest_resume(candidate_id, file_path, providers_to_close)
+        # Tags every AI call made for this resume with its candidate, for
+        # the Analytics "AI usage" card (services/ai_usage.py).
+        with ai_usage.usage_context(candidate_id=candidate_id):
+            await _do_ingest_resume(candidate_id, file_path, providers_to_close)
     finally:
         for provider in providers_to_close:
             try:
@@ -70,7 +88,7 @@ async def _do_ingest_resume(candidate_id: str, file_path: str, providers_to_clos
         if not candidate:
             return
 
-        candidate.status = "extracting"
+        _set_status(candidate, "extracting")
         await db.commit()
 
         # 1. Extract raw text (non-LLM, cheap). A genuinely broken file
@@ -87,12 +105,12 @@ async def _do_ingest_resume(candidate_id: str, file_path: str, providers_to_clos
             needs_vision = True
             raw_text = None
         except Exception:
-            candidate.status = "needs_review"
+            _set_status(candidate, "needs_review", "Could not read this file (it may be corrupt or password-protected)")
             await db.commit()
             return
 
         if not needs_vision and (not raw_text or not raw_text.strip()):
-            candidate.status = "needs_review"
+            _set_status(candidate, "needs_review", "No readable text found in this file")
             await db.commit()
             return
 
@@ -111,7 +129,7 @@ async def _do_ingest_resume(candidate_id: str, file_path: str, providers_to_clos
                 images = render_pdf_pages_to_base64_png(file_path)
                 extraction = await llm.extract_resume_from_images(images)
             except Exception:
-                candidate.status = "needs_review"
+                _set_status(candidate, "needs_review", "Scanned/image resume could not be read by AI")
                 await db.commit()
                 return
 
@@ -225,6 +243,12 @@ async def _do_ingest_resume(candidate_id: str, file_path: str, providers_to_clos
         # override (via PATCH /candidates/{id}) or a classification from an
         # earlier ingestion is never silently overwritten by a later
         # re-ingestion of the same or a re-uploaded resume.
+        # Same person already on file? (same email, or same last-10 phone
+        # digits, as another active candidate added earlier). Flags it as a
+        # possible duplicate for the recruiter -- never deletes or merges.
+        if candidate.possible_duplicate_of is None:
+            candidate.possible_duplicate_of = await _find_possible_duplicate(db, candidate)
+
         if extraction.get("sector") and not candidate.sector:
             candidate.sector = extraction["sector"]
         if extraction.get("position_role") and not candidate.position_role:
@@ -242,7 +266,7 @@ async def _do_ingest_resume(candidate_id: str, file_path: str, providers_to_clos
         if extraction.get("skills") and not candidate.resume_skills:
             candidate.resume_skills = extraction["skills"]
 
-        candidate.status = "embedding"
+        _set_status(candidate, "embedding")
         await db.commit()
 
         # 3. Build a clean summary and embed it (see doc: extract-then-embed, not RAG chunking)
@@ -258,8 +282,34 @@ async def _do_ingest_resume(candidate_id: str, file_path: str, providers_to_clos
         )
         await db.merge(embedding_row)
 
-        candidate.status = "ready"
+        _set_status(candidate, "ready")
         await db.commit()
+
+
+async def _find_possible_duplicate(db, candidate: Candidate) -> uuid.UUID | None:
+    """Earliest other active candidate with the same email (case-insensitive,
+    ignoring bulk-upload placeholders) or the same last 10 phone digits."""
+    conditions = []
+    email = (candidate.email or "").strip().lower()
+    if email and not email.endswith("@pending.local"):
+        conditions.append(func.lower(Candidate.email) == email)
+    phone = normalize_phone(candidate.phone or "")
+    if phone:
+        digits_only = func.regexp_replace(Candidate.phone, "[^0-9]", "", "g")
+        conditions.append(func.right(digits_only, 10) == phone)
+    if not conditions:
+        return None
+    result = await db.execute(
+        select(Candidate.id)
+        .where(
+            Candidate.id != candidate.id,
+            Candidate.deleted_at.is_(None),
+            or_(*conditions),
+        )
+        .order_by(Candidate.added_on)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 def _extract_contact_fields(extraction: dict) -> dict:

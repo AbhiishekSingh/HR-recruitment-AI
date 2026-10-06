@@ -1,5 +1,5 @@
 import client from './client'
-import type { Candidate, SectorCount, ResumeSearchResult, DuplicateCheckResult } from '../types'
+import type { UploadBatchResult, IngestionStatusRow, CandidateOverview, FingerprintMatch, Candidate, SectorCount, ResumeSearchResult, DuplicateCheckResult } from '../types'
 
 export interface CandidateFilters {
   search?: string
@@ -8,6 +8,8 @@ export interface CandidateFilters {
   min_experience?: number
   max_experience?: number
   qualification?: string   // free-text match against degree/institution
+  /** attention | processing | unclassified | duplicates */
+  status?: string
 }
 
 export async function listCandidates(filters: CandidateFilters = {}): Promise<Candidate[]> {
@@ -18,6 +20,7 @@ export async function listCandidates(filters: CandidateFilters = {}): Promise<Ca
   if (filters.min_experience !== undefined && filters.min_experience !== null) params.min_experience = String(filters.min_experience)
   if (filters.max_experience !== undefined && filters.max_experience !== null) params.max_experience = String(filters.max_experience)
   if (filters.qualification) params.qualification = filters.qualification
+  if (filters.status) params.status = filters.status
   const { data } = await client.get<Candidate[]>('/candidates', { params })
   return data
 }
@@ -150,4 +153,54 @@ async function openResumeBlob(candidateId: string, candidateName: string, ext: s
     link.remove()
   }
   setTimeout(() => window.URL.revokeObjectURL(blobUrl), 30_000)
+}
+/** One small batch (about 10 files) of a large bulk upload. Invalid files
+ *  come back in `failed` with a reason instead of failing the request. */
+export async function uploadResumeBatch(files: File[], jobId?: string, sector?: string): Promise<UploadBatchResult> {
+  const formData = new FormData()
+  files.forEach((file) => formData.append('files', file))
+  if (jobId) formData.append('job_id', jobId)
+  if (sector) formData.append('sector', sector)
+  const { data } = await client.post<UploadBatchResult>('/candidates/upload-batch', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120_000,
+  })
+  return data
+}
+
+/** Live AI-processing status for the given candidate ids. */
+export async function getIngestionStatus(ids: string[]): Promise<IngestionStatusRow[]> {
+  if (ids.length === 0) return []
+  const { data } = await client.post<IngestionStatusRow[]>('/candidates/ingestion-status', { ids })
+  return data
+}
+
+/** Re-run AI processing on already-saved resumes (failed / needs review / stuck). */
+export async function reprocessCandidates(ids: string[]): Promise<{ queued: number; skipped: string[] }> {
+  const { data } = await client.post('/candidates/reprocess', { ids })
+  return data
+}
+
+/** Totals for the Candidates landing page (sector cards + status cards). */
+export async function getCandidateOverview(): Promise<CandidateOverview> {
+  const { data } = await client.get<CandidateOverview>('/candidates/overview')
+  return data
+}
+
+/** Soft-deletes a candidate (their history stays in the database). */
+export async function deleteCandidate(id: string): Promise<void> {
+  await client.delete(`/candidates/${id}`)
+}
+
+/** Recruiter confirmed this is not a duplicate -- clears the flag. */
+export async function clearDuplicateFlag(id: string): Promise<Candidate> {
+  const { data } = await client.patch<Candidate>(`/candidates/${id}`, { clear_duplicate: true })
+  return data
+}
+
+/** Which of these SHA-256 file fingerprints are already on file. */
+export async function checkFingerprints(hashes: string[]): Promise<FingerprintMatch[]> {
+  if (hashes.length === 0) return []
+  const { data } = await client.post<FingerprintMatch[]>('/candidates/check-fingerprints', { hashes })
+  return data
 }

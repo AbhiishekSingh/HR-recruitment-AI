@@ -31,6 +31,16 @@ class LLMProvider(ABC):
         the same as "not available" -- see tasks_ingestion.py."""
         return ""
 
+    async def extract_jd_form(self, jd_text: str) -> dict:
+        """JD text -> requisition-form pre-fill values (see
+        validation.coerce_jd_form_extraction). Not abstract so other
+        providers keep working; they just can't pre-fill from a JD file."""
+        raise NotImplementedError("This AI provider can't read JD files")
+
+    async def extract_jd_form_from_images(self, images_b64: list[str]) -> dict:
+        """Same as extract_jd_form, for a scanned/image-only JD PDF."""
+        raise NotImplementedError("This AI provider can't read scanned JD files")
+
     @abstractmethod
     async def score_candidate(self, jd_requirements: dict, candidate_profile: dict) -> dict:
         """Returns a dict matching schemas.match.MatchResultOut (score/matched/missing/etc)."""

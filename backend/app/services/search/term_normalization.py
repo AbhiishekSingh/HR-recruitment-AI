@@ -31,60 +31,15 @@ for this particular problem.
 
 import re
 
-# Each group's key is just a label for readability; what matters is the list
-# of variant spellings, which are the terms treated as interchangeable.
-QUALIFICATION_GROUPS: list[list[str]] = [
-    ["bachelor of science", "bsc", "b sc", "b.sc", "b.sc."],
-    ["bachelor of technology", "btech", "b tech", "b.tech", "b.tech.", "bachelor of engineering", "be", "b.e", "b.e."],
-    ["bachelor of commerce", "bcom", "b com", "b.com", "b.com."],
-    ["bachelor of arts", "ba", "b.a", "b.a.", "bachelor's in arts"],
-    ["bachelor of business administration", "bba", "b.b.a"],
-    ["bachelor of computer applications", "bca", "b.c.a"],
-    ["master of science", "msc", "m sc", "m.sc", "m.sc."],
-    ["master of technology", "mtech", "m tech", "m.tech", "m.tech.", "master of engineering", "me", "m.e", "m.e."],
-    ["master of business administration", "mba", "m.b.a"],
-    ["master of computer applications", "mca", "m.c.a"],
-    ["master of commerce", "mcom", "m com", "m.com", "m.com."],
-    ["master of arts", "ma", "m.a", "m.a."],
-    ["doctor of philosophy", "phd", "ph d", "ph.d", "ph.d."],
-    ["diploma", "diploma"],
-    ["higher secondary", "12th", "hsc", "intermediate", "senior secondary"],
-    ["secondary school", "10th", "ssc", "matriculation"],
-]
+# The synonym lists now live in app/data/skill_synonyms.json (one file shared
+# with the free candidate scoring -- see skill_matcher.py). Edit that file to
+# add a synonym; these two names are kept so existing imports keep working.
+from app.services.search.skill_matcher import (  # noqa: E402
+    qualification_groups_for_search, skill_groups_for_search,
+)
 
-SKILL_GROUPS: list[list[str]] = [
-    ["react", "reactjs", "react.js", "react js"],
-    ["node", "nodejs", "node.js", "node js"],
-    ["javascript", "js"],
-    ["typescript", "ts"],
-    ["python"],
-    ["postgresql", "postgres", "psql"],
-    ["mysql", "my sql"],
-    ["mongodb", "mongo"],
-    ["amazon web services", "aws"],
-    ["google cloud platform", "gcp"],
-    ["microsoft azure", "azure"],
-    ["kubernetes", "k8s"],
-    ["docker"],
-    ["machine learning", "ml"],
-    ["artificial intelligence", "ai"],
-    ["natural language processing", "nlp"],
-    ["html5", "html"],
-    ["css3", "css"],
-    ["next.js", "nextjs", "next js"],
-    ["vue.js", "vuejs", "vue js", "vue"],
-    ["angular.js", "angularjs", "angular"],
-    [".net", "dotnet", "dot net"],
-    ["c#", "csharp", "c sharp"],
-    ["c++", "cpp"],
-    ["ci/cd", "cicd", "ci cd"],
-    ["power bi", "powerbi"],
-    ["search engine optimization", "seo"],
-    ["search engine marketing", "sem"],
-    ["human resources", "hr"],
-    ["customer relationship management", "crm"],
-    ["enterprise resource planning", "erp"],
-]
+QUALIFICATION_GROUPS: list[list[str]] = [[a.lower() for a in g] for g in qualification_groups_for_search()]
+SKILL_GROUPS: list[list[str]] = [[a.lower() for a in g] for g in skill_groups_for_search()]
 
 
 def _normalize(s: str) -> str:

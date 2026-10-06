@@ -1,24 +1,19 @@
-import { useState, useRef, FormEvent } from 'react'
+import { useState, FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listCandidates, createCandidate, uploadCandidateResume, updateCandidateClassification, bulkUploadResumes, checkDuplicateResume } from '../api/candidates'
+import { listCandidates, createCandidate, uploadCandidateResume, updateCandidateClassification, reprocessCandidates, deleteCandidate, clearDuplicateFlag } from '../api/candidates'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import CandidateAssessmentsModal from '../components/CandidateAssessmentsModal'
 import ScreeningFormModal from '../components/ScreeningFormModal'
-import DuplicateResumeModal from '../components/DuplicateResumeModal'
+import BulkUploadModal from '../components/BulkUploadModal'
 import SectorPicker from '../components/SectorPicker'
-import type { AssessmentScored, Candidate, DuplicateMatch } from '../types'
+import type { AssessmentScored, Candidate } from '../types'
+import { MAX_RESUME_MB } from '../types'
+import { RESUME_ACCEPT, resumeFileProblem } from '../utils/resumeFiles'
 import './CandidatesDirectoryPage.css'
-
-// What the recruiter chose in DuplicateResumeModal for one file, fed back
-// into handleBulkUpload's per-file loop via promptDuplicate()'s Promise.
-type DuplicateAction =
-  | { type: 'replace'; candidateId: string }
-  | { type: 'save' }
-  | { type: 'cancel' }
 
 export default function CandidatesDirectoryPage() {
   const [search, setSearch] = useState('')
@@ -26,6 +21,9 @@ export default function CandidatesDirectoryPage() {
   // Set when arriving from a sector card on /candidates/categories
   // (?sector=IT); an empty string means "all sectors".
   const sectorFilter = searchParams.get('sector') || ''
+  // Set from the status cards on /candidates/categories:
+  // attention | processing | unclassified | duplicates
+  const statusFilter = searchParams.get('status') || ''
   // Arriving from the sector-cards page's "+ Add one candidate" button
   // (/candidates?openForm=1) opens the form immediately, since that page
   // only shows cards and has no form of its own.
@@ -44,15 +42,11 @@ export default function CandidatesDirectoryPage() {
   // sector is auto-detected from each resume as before.
   const [uploadSector, setUploadSector] = useState(sectorFilter)
   const [manualSector, setManualSector] = useState('')
-  const [bulkSubmitting, setBulkSubmitting] = useState(false)
-  const [bulkError, setBulkError] = useState<string | null>(null)
-  const [bulkSuccessCount, setBulkSuccessCount] = useState<number | null>(null)
-  // Set while handleBulkUpload is paused waiting on the recruiter's answer
-  // for one file that check-duplicate flagged; duplicateResolverRef holds
-  // that paused loop iteration's Promise resolver so DuplicateResumeModal's
-  // buttons can hand the answer back in (see promptDuplicate/resolveDuplicate).
-  const [duplicatePrompt, setDuplicatePrompt] = useState<{ file: File; matches: DuplicateMatch[] } | null>(null)
-  const duplicateResolverRef = useRef<((action: DuplicateAction) => void) | null>(null)
+  // Files handed to BulkUploadModal, which runs the whole upload (pre-check,
+  // duplicates, batched upload, AI-processing progress, retry) in a popup.
+  const [uploadingFiles, setUploadingFiles] = useState<File[] | null>(null)
+  // Bumped after each bulk upload to reset the <input type="file">.
+  const [fileInputKey, setFileInputKey] = useState(0)
   const [activeCandidate, setActiveCandidate] = useState<Candidate | null>(null)
   // Full row + resolved job title, both already available from
   // CandidateAssessmentsModal — no extra fetch needed to open this form.
@@ -92,10 +86,11 @@ export default function CandidatesDirectoryPage() {
   const hasActiveAdvancedFilters = Object.values(appliedFilters).some(Boolean)
 
   const { data: candidates, isLoading } = useQuery({
-    queryKey: ['candidates', search, sectorFilter, appliedFilters],
+    queryKey: ['candidates', search, sectorFilter, statusFilter, appliedFilters],
     queryFn: () => listCandidates({
       search: search || undefined,
       sector: sectorFilter || undefined,
+      status: statusFilter || undefined,
       skills: appliedFilters.skills || undefined,
       min_experience: appliedFilters.minExp ? Number(appliedFilters.minExp) : undefined,
       max_experience: appliedFilters.maxExp ? Number(appliedFilters.maxExp) : undefined,
@@ -133,6 +128,49 @@ export default function CandidatesDirectoryPage() {
     searchParams.delete('sector')
     setSearchParams(searchParams)
   }
+
+  function clearStatusFilter() {
+    searchParams.delete('status')
+    setSearchParams(searchParams)
+  }
+
+  function refreshCandidateLists() {
+    queryClient.invalidateQueries({ queryKey: ['candidates'] })
+    queryClient.invalidateQueries({ queryKey: ['candidateSectorCounts'] })
+    queryClient.invalidateQueries({ queryKey: ['candidateOverview'] })
+  }
+
+  // Re-runs AI processing on already-saved resumes (no re-upload).
+  const retryMutation = useMutation({
+    mutationFn: (ids: string[]) => reprocessCandidates(ids),
+    onSuccess: refreshCandidateLists,
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteCandidate(id),
+    onSuccess: refreshCandidateLists,
+  })
+
+  const notDuplicateMutation = useMutation({
+    mutationFn: (id: string) => clearDuplicateFlag(id),
+    onSuccess: refreshCandidateLists,
+  })
+
+  function handleDelete(c: Candidate) {
+    if (window.confirm(`Delete ${c.name}? This removes them from all lists (their history is kept).`)) {
+      deleteMutation.mutate(c.id)
+    }
+  }
+
+  const STATUS_FILTER_LABELS: Record<string, string> = {
+    attention: 'Needs attention: AI processing failed or got stuck',
+    processing: 'Still processing',
+    unclassified: 'Processed, but no sector assigned',
+    duplicates: 'Possible duplicates: same email, phone or file as another candidate',
+  }
+  const retryableIds = (candidates || [])
+    .filter((c) => c.file_path && (c.status === 'failed' || c.status === 'needs_review' || c.stuck))
+    .map((c) => c.id)
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -174,89 +212,27 @@ export default function CandidatesDirectoryPage() {
       e.currentTarget.reset()
     } catch (err: any) {
       setSubmitError(
-        err?.response?.data?.detail || "Could not save — check the email isn't already in use, and the resume is a PDF/Word file under 5MB."
+        err?.response?.data?.detail || `Could not save — check the email isn't already in use, and the resume is a PDF/Word file under ${MAX_RESUME_MB}MB.`
       )
     } finally {
       setSubmitting(false)
     }
   }
 
-  /** Pauses the upload loop on this file and waits for the recruiter's
-   *  choice in DuplicateResumeModal -- resolved by resolveDuplicatePrompt()
-   *  when they click one of its buttons. */
-  function promptDuplicate(file: File, matches: DuplicateMatch[]): Promise<DuplicateAction> {
-    return new Promise((resolve) => {
-      duplicateResolverRef.current = resolve
-      setDuplicatePrompt({ file, matches })
-    })
-  }
-
-  function resolveDuplicatePrompt(action: DuplicateAction) {
-    setDuplicatePrompt(null)
-    duplicateResolverRef.current?.(action)
-    duplicateResolverRef.current = null
-  }
-
-  async function handleBulkUpload() {
+  function handleBulkUpload() {
     if (bulkFiles.length === 0) return
-    setBulkError(null)
-    setBulkSuccessCount(null)
-    setBulkSubmitting(true)
-    try {
-      // Checked one file at a time, in order, rather than all at once --
-      // each match (if any) needs the recruiter's answer before the next
-      // file's check makes sense to run, and it keeps the modal from
-      // showing more than one file's worth of matches at a time.
-      const filesToCreate: File[] = []
-      let replacedCount = 0
-      for (const file of bulkFiles) {
-        let check
-        try {
-          check = await checkDuplicateResume(file)
-        } catch {
-          // The pre-check itself failing (network hiccup, etc) shouldn't
-          // block the upload -- fall through and upload this file normally,
-          // same as if no duplicate had been found.
-          filesToCreate.push(file)
-          continue
-        }
-        if (!check.checked || check.matches.length === 0) {
-          filesToCreate.push(file)
-          continue
-        }
-        const action = await promptDuplicate(file, check.matches)
-        if (action.type === 'cancel') continue
-        if (action.type === 'save') { filesToCreate.push(file); continue }
-        // action.type === 'replace' -- reuses the existing "attach/replace
-        // resume" endpoint against the matched candidate instead of
-        // creating a new one, and re-queues ingestion on it exactly like a
-        // normal resume replacement would.
-        await uploadCandidateResume(action.candidateId, file)
-        if (uploadSector.trim()) {
-          // A pinned sector applies here too -- otherwise "replace" would
-          // silently ignore the sector the recruiter just chose for this
-          // batch, only applying it to files that ended up as new candidates.
-          await updateCandidateClassification(action.candidateId, { sector: uploadSector.trim() })
-        }
-        replacedCount += 1
-      }
+    setUploadingFiles(bulkFiles)
+  }
 
-      let createdCount = 0
-      if (filesToCreate.length > 0) {
-        const created = await bulkUploadResumes(filesToCreate, undefined, uploadSector.trim() || undefined)
-        createdCount = created.length
-      }
+  function finishBulkUpload() {
+    setUploadingFiles(null)
+    setBulkFiles([])
+    setFileInputKey((k) => k + 1)
+    setUploadSector(sectorFilter)
+  }
 
-      queryClient.invalidateQueries({ queryKey: ['candidates'] })
-      queryClient.invalidateQueries({ queryKey: ['candidateSectorCounts'] })
-      setBulkSuccessCount(createdCount + replacedCount)
-      setBulkFiles([])
-      setUploadSector(sectorFilter)
-    } catch (err: any) {
-      setBulkError(err?.response?.data?.detail || 'Upload failed — make sure every file is a PDF or Word document under 5MB.')
-    } finally {
-      setBulkSubmitting(false)
-    }
+  function refreshAfterUpload() {
+    refreshCandidateLists()
   }
 
   function handleReclassifySubmit(e: FormEvent<HTMLFormElement>, candidateId: string) {
@@ -301,6 +277,23 @@ export default function CandidatesDirectoryPage() {
         </div>
       )}
 
+      {statusFilter && (
+        <div className="status-filter-banner">
+          <div>
+            <Badge variant={statusFilter === 'attention' ? 'pass' : 'review'}>{STATUS_FILTER_LABELS[statusFilter] || statusFilter}</Badge>{' '}
+            <button className="link-button" onClick={clearStatusFilter}>Show all candidates</button>
+          </div>
+          {retryableIds.length > 0 && (
+            <Button size="sm" loading={retryMutation.isPending} onClick={() => retryMutation.mutate(retryableIds)}>
+              Retry AI processing for all {retryableIds.length}
+            </Button>
+          )}
+          {retryMutation.isSuccess && (
+            <span className="muted">Re-queued {retryMutation.data?.queued}. Make sure the Celery worker is running.</span>
+          )}
+        </div>
+      )}
+
       {showForm && (
         <div className="card" style={{ marginBottom: 'var(--space-5)' }}>
           <div className="add-mode-tabs">
@@ -323,14 +316,16 @@ export default function CandidatesDirectoryPage() {
           {addMode === 'upload' && (
             <div className="upload-mode">
               <p className="muted">
-                Select one or more resumes (PDF or Word, max 5MB each). Name, contact details,
+                Select one or more resumes (PDF or Word .docx, <strong>max {MAX_RESUME_MB}MB each</strong>; image files are not accepted).
+                Any file that doesn't fit is listed before upload so you can skip it. Name, contact details,
                 skills, experience, sector, and position are all extracted automatically — nothing
                 else to fill in, unless you want to pin the sector yourself below.
               </p>
               <div className="field">
                 <input
+                  key={fileInputKey}
                   type="file"
-                  accept=".pdf,.docx"
+                  accept={RESUME_ACCEPT}
                   multiple
                   onChange={(e) => setBulkFiles(Array.from(e.target.files || []))}
                 />
@@ -340,18 +335,17 @@ export default function CandidatesDirectoryPage() {
                 onChange={setUploadSector}
                 helpText="pins every resume in this batch to this sector instead of auto-detecting it, and adds a new sector card if it's not one of the existing ones"
               />
-              {bulkFiles.length > 0 && (
-                <p className="muted">{bulkFiles.length} file{bulkFiles.length === 1 ? '' : 's'} selected</p>
-              )}
-              {bulkError && <p className="error-text" role="alert">{bulkError}</p>}
-              {bulkSuccessCount !== null && (
-                <p className="success-text">
-                  Uploaded {bulkSuccessCount} resume{bulkSuccessCount === 1 ? '' : 's'} — processing has
-                  started; candidates will appear below shortly with status "queued"/"extracting".
-                </p>
-              )}
-              <Button onClick={handleBulkUpload} loading={bulkSubmitting} disabled={bulkFiles.length === 0}>
-                {bulkSubmitting ? 'Uploading...' : `Upload ${bulkFiles.length || ''} resume${bulkFiles.length === 1 ? '' : 's'}`}
+              {bulkFiles.length > 0 && (() => {
+                const problems = bulkFiles.filter((f) => resumeFileProblem(f)).length
+                return (
+                  <p className="muted">
+                    {bulkFiles.length} file{bulkFiles.length === 1 ? '' : 's'} selected
+                    {problems > 0 && <span className="error-text"> · {problems} can't be uploaded (you'll be asked to skip them)</span>}
+                  </p>
+                )
+              })()}
+              <Button onClick={handleBulkUpload} disabled={bulkFiles.length === 0 || uploadingFiles !== null}>
+                {`Upload ${bulkFiles.length || ''} resume${bulkFiles.length === 1 ? '' : 's'}`}
               </Button>
             </div>
           )}
@@ -363,8 +357,8 @@ export default function CandidatesDirectoryPage() {
                 here since there's nothing to extract them from. Everything else is optional.
               </p>
               <div className="field">
-                <label>Resume (optional — PDF or Word, max 5MB)</label>
-                <input name="resume" type="file" accept=".pdf,.docx" />
+                <label>Resume (optional — PDF or Word .docx, max {MAX_RESUME_MB}MB)</label>
+                <input name="resume" type="file" accept={RESUME_ACCEPT} />
               </div>
               <div className="grid-2">
                 <div className="field">
@@ -457,7 +451,16 @@ export default function CandidatesDirectoryPage() {
               <tbody>
                 {candidates.map((c) => (
                   <tr key={c.id} className="candidates-row" onClick={() => setActiveCandidate(c)}>
-                    <td><strong>{c.name}</strong><div className="muted">{c.current_company}</div></td>
+                    <td>
+                      <strong>{c.name}</strong><div className="muted">{c.current_company}</div>
+                      {c.possible_duplicate_of && (
+                        <div className="duplicate-flag" onClick={(e) => e.stopPropagation()}>
+                          ⧉ Possible duplicate of <strong>{c.possible_duplicate_of_name || 'another candidate'}</strong>
+                          {' · '}
+                          <button className="link-button" onClick={() => notDuplicateMutation.mutate(c.id)}>Not a duplicate</button>
+                        </div>
+                      )}
+                    </td>
                     <td>{c.email}<div className="muted">{c.phone}</div></td>
                     <td>{c.experience_years} yrs</td>
                     <td onClick={(e) => e.stopPropagation()}>
@@ -480,7 +483,25 @@ export default function CandidatesDirectoryPage() {
                     <td>
                       <Badge variant={c.file_path ? 'shortlist' : 'pass'}>{c.file_path ? 'Attached' : 'Missing'}</Badge>
                     </td>
-                    <td><span className="badge badge-review">{c.status}</span></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <Badge variant={
+                        c.status === 'ready' ? 'shortlist'
+                          : c.status === 'failed' || c.status === 'needs_review' || c.stuck ? 'pass'
+                            : 'review'
+                      }>
+                        {c.stuck ? 'stuck' : c.status === 'needs_review' ? 'needs review' : c.status}
+                      </Badge>
+                      {c.status_detail && <div className="muted status-detail">{c.status_detail}</div>}
+                      {c.stuck && <div className="muted status-detail">No progress for 15+ min. Is the Celery worker running?</div>}
+                      <div className="row status-actions">
+                        {c.file_path && (c.status === 'failed' || c.status === 'needs_review' || c.stuck) && (
+                          <button className="link-button" onClick={() => retryMutation.mutate([c.id])}>Retry</button>
+                        )}
+                        {(statusFilter === 'attention' || statusFilter === 'duplicates' || c.possible_duplicate_of) && (
+                          <button className="link-button status-delete" onClick={() => handleDelete(c)}>Delete</button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -511,13 +532,12 @@ export default function CandidatesDirectoryPage() {
         />
       )}
 
-      {duplicatePrompt && (
-        <DuplicateResumeModal
-          fileName={duplicatePrompt.file.name}
-          matches={duplicatePrompt.matches}
-          onReplace={(candidateId) => resolveDuplicatePrompt({ type: 'replace', candidateId })}
-          onSaveAnyway={() => resolveDuplicatePrompt({ type: 'save' })}
-          onCancel={() => resolveDuplicatePrompt({ type: 'cancel' })}
+      {uploadingFiles && (
+        <BulkUploadModal
+          files={uploadingFiles}
+          sector={uploadSector.trim() || undefined}
+          onChanged={refreshAfterUpload}
+          onClose={finishBulkUpload}
         />
       )}
     </div>

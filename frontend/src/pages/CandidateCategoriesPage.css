@@ -31,3 +31,20 @@
   color: var(--muted-color, #666);
   font-size: 0.9rem;
 }
+
+/* Total line + status cards (needs attention / processing / duplicates) */
+.categories-total {
+  margin: var(--space-4, 16px) 0 0;
+}
+.status-card-grid {
+  margin-top: var(--space-3, 12px);
+}
+.status-card-bad {
+  border-color: var(--color-pass, #a33a3a);
+  background: var(--color-pass-bg, #fbe9e9);
+}
+.status-card-bad .sector-card-name { color: var(--color-pass, #a33a3a); }
+.status-card-warn {
+  border-color: var(--color-review, #b8860b);
+  background: var(--color-review-bg, #fdf3d9);
+}

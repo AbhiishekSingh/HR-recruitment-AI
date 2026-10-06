@@ -1,5 +1,5 @@
 import client from './client'
-import type { AssessmentScored } from '../types'
+import type { AssessmentScored, AIScoreRequest, AIScoreResponse } from '../types'
 
 export async function getJobPipeline(jobId: string): Promise<AssessmentScored[]> {
   const { data } = await client.get<AssessmentScored[]>(`/jobs/${jobId}/pipeline`)
@@ -59,5 +59,11 @@ export async function sendToClient(assessmentIds: string[]): Promise<{ sent: num
 
 export async function submitClientFeedback(assessmentId: string, feedback: string): Promise<AssessmentScored> {
   const { data } = await client.post<AssessmentScored>(`/assessments/${assessmentId}/client-feedback`, { feedback })
+  return data
+}
+/** On-demand AI scoring. dry_run=true only returns the count + estimated
+ *  cost (nothing is spent); dry_run=false starts it in the background. */
+export async function aiScoreCandidates(jobId: string, req: AIScoreRequest): Promise<AIScoreResponse> {
+  const { data } = await client.post<AIScoreResponse>(`/jobs/${jobId}/ai-score`, req)
   return data
 }

@@ -1,0 +1,46 @@
+.requisition-fields {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.requisition-fields:disabled { opacity: 0.6; }
+
+/* JD upload box at the top of the form */
+.jd-upload-box {
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px dashed var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+.jd-upload-head { margin-bottom: var(--space-2); }
+.jd-reading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+}
+.jd-message {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+.jd-message-ok { background: var(--color-shortlist-bg); color: var(--color-shortlist); }
+.jd-message-warn { background: var(--color-review-bg); color: var(--color-review); }
+.jd-message-bad { background: var(--color-pass-bg); color: var(--color-pass); }
+
+/* Fields the JD didn't provide */
+.field-missing input,
+.field-missing textarea {
+  border-color: var(--color-review);
+  background: var(--color-review-bg);
+}
+.field-missing-hint {
+  margin-left: 6px;
+  font-weight: 600;
+  font-size: var(--text-xs);
+  color: var(--color-review);
+}
+.field-help { font-size: var(--text-xs); }

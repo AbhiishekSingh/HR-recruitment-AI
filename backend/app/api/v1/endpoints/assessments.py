@@ -1,9 +1,18 @@
 import uuid
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.config import settings
+from app.models.ai_usage_log import AIUsageLog
+from app.models.candidate_embedding import CandidateEmbedding
+from app.services import ai_usage
+from app.services.scoring.job_config import effective_config
+from app.workers.tasks_matching import ai_score_candidates_task
 
 from app.api.deps import get_db, get_current_user
 from app.models.assessment import Assessment
@@ -26,14 +35,51 @@ async def _get_match_result(db: AsyncSession, job_id: uuid.UUID, candidate_id: u
     return result.scalar_one_or_none()
 
 
+# Jobs whose "meaning match" embedding has already been queued by this
+# process, so a pipeline page polling every few seconds doesn't queue it
+# again and again while the worker is still building it.
+_embedding_requested: set[uuid.UUID] = set()
+
+
+def _ensure_job_embedding(job: JobPosting) -> None:
+    if job.embedding is not None or job.id in _embedding_requested:
+        return
+    _embedding_requested.add(job.id)
+    try:
+        from app.workers.tasks_matching import embed_job_task
+        embed_job_task.delay(str(job.id))
+    except Exception:
+        _embedding_requested.discard(job.id)
+
+
+async def _similarities(db: AsyncSession, job: JobPosting, candidate_ids) -> dict[uuid.UUID, float]:
+    """JD-vs-resume cosine similarity for the "meaning match" part of the
+    smart score. Uses embeddings that already exist -- no AI call."""
+    ids = list(candidate_ids)
+    if not ids:
+        return {}
+    if job.embedding is None:
+        _ensure_job_embedding(job)
+        return {}
+    distance = CandidateEmbedding.embedding.cosine_distance(job.embedding)
+    rows = await db.execute(
+        select(CandidateEmbedding.candidate_id, distance).where(CandidateEmbedding.candidate_id.in_(ids))
+    )
+    return {cid: 1 - float(d) for cid, d in rows.all() if d is not None}
+
+
 def _to_scored(
     assessment: Assessment,
     candidate: Candidate,
     job: JobPosting,
     match_result: MatchResult | None = None,
     candidate_profile: CandidateProfile | None = None,
+    config: dict | None = None,
+    similarity: float | None = None,
 ) -> dict:
-    result = compute_final_score(job, candidate, assessment, match_result, candidate_profile)
+    result = compute_final_score(job, candidate, assessment, match_result, candidate_profile, config, similarity)
+    ai = result["ai"]
+    smart = result["smart"]
     return {
         **{c.name: getattr(assessment, c.name) for c in assessment.__table__.columns},
         # Carried over from the related Candidate row (already loaded by the
@@ -43,16 +89,78 @@ def _to_scored(
         "candidate_experience_years": candidate.experience_years,
         "candidate_current_company": candidate.current_company,
         "candidate_status": candidate.status,
-        "ai_score": result["ai"]["score"],
-        "ai_source": result["ai"].get("source"),
-        "matched_skills": result["ai"]["matched_skills"],
-        "missing_skills": result["ai"]["missing_skills"],
+        "ai_score": ai["score"],
+        "ai_source": ai.get("source"),
+        "matched_skills": ai["matched_skills"],
+        "missing_skills": ai["missing_skills"],
+        "smart_score": smart["score"],
+        "score_parts": smart["parts"],
+        "skill_evidence": smart["evidence"],
+        "ai_stale": result["ai_stale"],
+        "ai_previous_score": result["ai_previous_score"],
+        "ai_strengths": ai.get("strengths", []) if ai.get("source") == "ai_pipeline" else [],
+        "ai_gaps": ai.get("gaps", []) if ai.get("source") == "ai_pipeline" else [],
+        "ai_recommendation": ai.get("recommendation") if ai.get("source") == "ai_pipeline" else None,
         "assessment_score": result["assessment"]["score"] if result["assessment"] else None,
         "final_score": result["final"],
         "bucket": result["bucket"],
         "flags": result["flags"],
         "adjustments": result["adjustments"],
     }
+
+
+async def _score_single(db, assessment, candidate, job, match_result, candidate_profile) -> dict:
+    sims = await _similarities(db, job, [candidate.id])
+    return _to_scored(assessment, candidate, job, match_result, candidate_profile,
+                      effective_config(job), sims.get(candidate.id))
+
+
+async def _pipeline_rows(db: AsyncSession, job: JobPosting) -> list[dict]:
+    """Every assessment for this job, scored and sorted (shared by the
+    pipeline view and the AI-scoring selection, so "top 20" means exactly
+    the top 20 HR sees)."""
+    result = await db.execute(select(Assessment).where(Assessment.job_id == job.id))
+    assessments = result.scalars().all()
+
+    # Batch-fetch everything in one query per table (no N+1).
+    candidate_ids = {a.candidate_id for a in assessments}
+    candidates_by_id: dict[uuid.UUID, Candidate] = {}
+    match_results_by_candidate: dict[uuid.UUID, MatchResult] = {}
+    profiles_by_candidate: dict[uuid.UUID, CandidateProfile] = {}
+    if candidate_ids:
+        cand_result = await db.execute(select(Candidate).where(Candidate.id.in_(candidate_ids)))
+        candidates_by_id = {c.id: c for c in cand_result.scalars().all()}
+        mr_result = await db.execute(
+            select(MatchResult).where(MatchResult.job_id == job.id, MatchResult.candidate_id.in_(candidate_ids))
+        )
+        match_results_by_candidate = {mr.candidate_id: mr for mr in mr_result.scalars().all()}
+        profile_result = await db.execute(
+            select(CandidateProfile).where(CandidateProfile.candidate_id.in_(candidate_ids))
+        )
+        profiles_by_candidate = {p.candidate_id: p for p in profile_result.scalars().all()}
+
+    config = effective_config(job)
+    sims = await _similarities(db, job, candidate_ids)
+
+    scored = []
+    for a in assessments:
+        candidate = candidates_by_id.get(a.candidate_id)
+        if candidate and candidate.deleted_at is None:
+            scored.append(_to_scored(
+                a, candidate, job,
+                match_results_by_candidate.get(a.candidate_id),
+                profiles_by_candidate.get(a.candidate_id),
+                config, sims.get(a.candidate_id),
+            ))
+
+    # Pending rows first (nothing waiting on screening gets buried), each
+    # group ordered best first: pending by their (smart or AI) score,
+    # screened by final score.
+    scored.sort(key=lambda s: (
+        0 if s["bucket"] == "pending" else 1,
+        -((s["ai_score"] if s["bucket"] == "pending" else s["final_score"]) or 0),
+    ))
+    return scored
 
 
 @router.get("/jobs/{job_id}/pipeline", response_model=list[AssessmentScored])
@@ -62,52 +170,90 @@ async def get_job_pipeline(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     job = await db.get(JobPosting, job_id)
     if not job:
         raise HTTPException(404, "Job posting not found")
+    return await _pipeline_rows(db, job)
 
-    result = await db.execute(select(Assessment).where(Assessment.job_id == job_id))
-    assessments = result.scalars().all()
 
-    # Batch-fetch every candidate this pipeline needs in one query instead of
-    # one `db.get()` per row (was N+1 — 50 assessments meant 51 round trips).
-    candidate_ids = {a.candidate_id for a in assessments}
-    candidates_by_id: dict[uuid.UUID, Candidate] = {}
-    if candidate_ids:
-        cand_result = await db.execute(select(Candidate).where(Candidate.id.in_(candidate_ids)))
-        candidates_by_id = {c.id: c for c in cand_result.scalars().all()}
+class AIScoreRequest(BaseModel):
+    # top = best N by score; above = score >= min_score; selected = these
+    # candidates; stale = every out-of-date AI score
+    mode: Literal["top", "above", "selected", "stale"] = "top"
+    count: int = Field(20, ge=1, le=200)
+    min_score: int = Field(70, ge=0, le=100)
+    candidate_ids: list[uuid.UUID] = []
+    dry_run: bool = True
 
-    # Batch-fetch every MatchResult this pipeline needs in one query too —
-    # same N+1 concern as the candidate fetch above, since this job may have
-    # dozens of AI-scored pairs.
-    match_results_by_candidate: dict[uuid.UUID, MatchResult] = {}
-    if candidate_ids:
-        mr_result = await db.execute(
-            select(MatchResult).where(MatchResult.job_id == job_id, MatchResult.candidate_id.in_(candidate_ids))
-        )
-        match_results_by_candidate = {mr.candidate_id: mr for mr in mr_result.scalars().all()}
 
-    # Batch-fetch every CandidateProfile too — this is what the fallback
-    # estimate should be reading skills/experience from (see
-    # compute_final_score), not Candidate.resume_skills/experience_years,
-    # which bulk upload / ingestion never populate.
-    profiles_by_candidate: dict[uuid.UUID, CandidateProfile] = {}
-    if candidate_ids:
-        profile_result = await db.execute(
-            select(CandidateProfile).where(CandidateProfile.candidate_id.in_(candidate_ids))
-        )
-        profiles_by_candidate = {p.candidate_id: p for p in profile_result.scalars().all()}
+class AIScoreResponse(BaseModel):
+    to_score: int
+    already_done: int
+    not_ready: int
+    candidate_ids: list[uuid.UUID]
+    cost_per_candidate_inr: float
+    estimated_cost_inr: float
+    estimated_cost_usd: float
+    queued: bool = False
 
-    scored = []
-    for a in assessments:
-        candidate = candidates_by_id.get(a.candidate_id)
-        if candidate:
-            scored.append(_to_scored(
-                a, candidate, job,
-                match_results_by_candidate.get(a.candidate_id),
-                profiles_by_candidate.get(a.candidate_id),
-            ))
 
-    # Pending rows first (nothing waiting on screening gets buried), then by final score desc.
-    scored.sort(key=lambda s: (0 if s["bucket"] == "pending" else 1, -(s["final_score"] or 0)))
-    return scored
+async def _avg_scoring_cost_usd(db: AsyncSession) -> float:
+    """Average real cost of recent AI scoring calls (falls back to the
+    estimate until there are some)."""
+    rows = (await db.execute(
+        select(AIUsageLog.cost_usd)
+        .where(AIUsageLog.task == "candidate_scoring", AIUsageLog.priced == True)  # noqa: E712
+        .order_by(AIUsageLog.created_at.desc())
+        .limit(50)
+    )).scalars().all()
+    return (sum(rows) / len(rows)) if len(rows) >= 5 else ai_usage.DEFAULT_SCORING_COST_USD
+
+
+@router.post("/jobs/{job_id}/ai-score", response_model=AIScoreResponse)
+async def ai_score_candidates(
+    job_id: uuid.UUID,
+    payload: AIScoreRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """On-demand AI scoring. With dry_run=true (the default) nothing is
+    spent: it returns how many candidates would be scored and the estimated
+    cost, for the confirm dialog. Candidates whose AI score is already up
+    to date are skipped (no double charge); candidates whose resume isn't
+    processed yet can't be AI-scored."""
+    job = await db.get(JobPosting, job_id)
+    if not job or job.deleted_at is not None:
+        raise HTTPException(404, "Job posting not found")
+
+    rows = await _pipeline_rows(db, job)
+    if payload.mode == "top":
+        ranked = sorted(rows, key=lambda r: -(r["smart_score"] or 0))
+        chosen = ranked[: payload.count]
+    elif payload.mode == "above":
+        chosen = [r for r in rows if (r["smart_score"] or 0) >= payload.min_score]
+    elif payload.mode == "stale":
+        chosen = [r for r in rows if r["ai_stale"]]
+    else:
+        wanted = set(payload.candidate_ids)
+        chosen = [r for r in rows if r["candidate_id"] in wanted]
+
+    already = [r for r in chosen if r["ai_source"] == "ai_pipeline"]
+    not_ready = [r for r in chosen if r["ai_source"] != "ai_pipeline" and r["candidate_status"] != "ready"]
+    to_score = [r for r in chosen if r["ai_source"] != "ai_pipeline" and r["candidate_status"] == "ready"]
+    ids = [r["candidate_id"] for r in to_score]
+
+    per_usd = await _avg_scoring_cost_usd(db)
+    response = AIScoreResponse(
+        to_score=len(ids), already_done=len(already), not_ready=len(not_ready), candidate_ids=ids,
+        cost_per_candidate_inr=round(per_usd * settings.usd_to_inr, 2),
+        estimated_cost_inr=round(per_usd * len(ids) * settings.usd_to_inr, 2),
+        estimated_cost_usd=round(per_usd * len(ids), 4),
+    )
+    if payload.dry_run or not ids:
+        return response
+    try:
+        ai_score_candidates_task.delay(str(job.id), [str(i) for i in ids])
+    except Exception:
+        raise HTTPException(503, "Could not start AI scoring: the background worker (Celery/Redis) is not reachable")
+    response.queued = True
+    return response
 
 
 @router.get("/candidates/{candidate_id}/assessments", response_model=list[AssessmentScored])
@@ -130,7 +276,7 @@ async def get_candidate_assessments(candidate_id: uuid.UUID, db: AsyncSession = 
         job = await db.get(JobPosting, a.job_id)
         if job:
             match_result = await _get_match_result(db, a.job_id, candidate_id)
-            scored.append(_to_scored(a, candidate, job, match_result, candidate_profile))
+            scored.append(await _score_single(db, a, candidate, job, match_result, candidate_profile))
     return scored
 
 
@@ -167,7 +313,7 @@ async def start_or_get_assessment(
 
     match_result = await _get_match_result(db, payload.job_id, payload.candidate_id)
     candidate_profile = await db.get(CandidateProfile, payload.candidate_id)
-    return _to_scored(assessment, candidate, job, match_result, candidate_profile)
+    return await _score_single(db, assessment, candidate, job, match_result, candidate_profile)
 
 
 @router.patch("/assessments/{assessment_id}", response_model=AssessmentScored)
@@ -197,7 +343,7 @@ async def submit_screening(
     job = await db.get(JobPosting, assessment.job_id)
     match_result = await _get_match_result(db, assessment.job_id, assessment.candidate_id)
     candidate_profile = await db.get(CandidateProfile, assessment.candidate_id)
-    return _to_scored(assessment, candidate, job, match_result, candidate_profile)
+    return await _score_single(db, assessment, candidate, job, match_result, candidate_profile)
 
 
 class StatusUpdate(BaseModel):
@@ -223,7 +369,7 @@ async def set_status(
     job = await db.get(JobPosting, assessment.job_id)
     match_result = await _get_match_result(db, assessment.job_id, assessment.candidate_id)
     candidate_profile = await db.get(CandidateProfile, assessment.candidate_id)
-    return _to_scored(assessment, candidate, job, match_result, candidate_profile)
+    return await _score_single(db, assessment, candidate, job, match_result, candidate_profile)
 
 
 class SendToClientRequest(BaseModel):
@@ -271,4 +417,4 @@ async def client_feedback(
     job = await db.get(JobPosting, assessment.job_id)
     match_result = await _get_match_result(db, assessment.job_id, assessment.candidate_id)
     candidate_profile = await db.get(CandidateProfile, assessment.candidate_id)
-    return _to_scored(assessment, candidate, job, match_result, candidate_profile)
+    return await _score_single(db, assessment, candidate, job, match_result, candidate_profile)

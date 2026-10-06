@@ -202,3 +202,76 @@ def coerce_score_result(raw: dict) -> dict:
         "gaps": _as_str_list(raw.get("gaps")),
         "recommendation": recommendation,
     }
+
+
+def _as_non_negative(value) -> float | None:
+    f = _as_float(value)
+    return f if f is not None and f >= 0 else None
+
+
+def coerce_jd_form_extraction(raw: dict) -> dict:
+    """Pre-fill values for the requisition form. Numbers the JD didn't
+    state stay None (never 0) so the form can highlight them for HR."""
+    if not isinstance(raw, dict):
+        raw = {}
+    title = raw.get("title")
+    title = title.strip()[:300] if isinstance(title, str) and title.strip() else None
+
+    budget_min = _as_non_negative(raw.get("budget_min_inr"))
+    budget_max = _as_non_negative(raw.get("budget_max_inr"))
+    if budget_min is not None and budget_max is not None and budget_min > budget_max:
+        budget_min, budget_max = budget_max, budget_min
+
+    exp_min = _as_non_negative(raw.get("experience_min_years"))
+    exp_max = _as_non_negative(raw.get("experience_max_years"))
+    if exp_min is not None and exp_min > 60:
+        exp_min = None
+    if exp_max is not None and exp_max > 60:
+        exp_max = None
+    if exp_min is not None and exp_max is not None and exp_min > exp_max:
+        exp_min, exp_max = exp_max, exp_min
+
+    notice = _as_non_negative(raw.get("max_notice_days"))
+    notice_days = int(round(notice)) if notice is not None and notice <= 365 else None
+
+    required = _as_str_list(raw.get("required_skills"))
+    nice = [s for s in _as_str_list(raw.get("nice_to_have_skills")) if s not in required]
+
+    groups = []
+    for g in raw.get("skill_groups") or []:
+        if not isinstance(g, dict):
+            continue
+        skills = _as_str_list(g.get("skills"))[:20]
+        if not skills:
+            continue
+        gtype = g.get("type") if g.get("type") in ("must", "nice", "soft") else "must"
+        name = g.get("name").strip()[:80] if isinstance(g.get("name"), str) and g.get("name").strip() else skills[0]
+        groups.append({"name": name, "type": gtype, "skills": skills,
+                       "synonyms": _as_str_list(g.get("synonyms"))[:20]})
+        if len(groups) >= 15:
+            break
+    # Make sure every listed required/nice skill sits in some group.
+    grouped = {s.lower() for g in groups for s in g["skills"]}
+    for s in required:
+        if s.lower() not in grouped:
+            groups.append({"name": s, "type": "must", "skills": [s], "synonyms": []})
+    for s in nice:
+        if s.lower() not in grouped:
+            groups.append({"name": s, "type": "nice", "skills": [s], "synonyms": []})
+
+    return {
+        "skill_groups": groups[:15],
+        "related_titles": _as_str_list(raw.get("related_titles"))[:6],
+        "title": title,
+        "locations": _as_str_list(raw.get("locations")),
+        "budget_min": budget_min,
+        "budget_max": budget_max,
+        "experience_min": exp_min,
+        "experience_max": exp_max,
+        "max_notice_days": notice_days,
+        "required_skills": required,
+        "nice_to_have_skills": nice,
+        "responsibilities": _as_str_list(raw.get("responsibilities")),
+        "qualifications": _as_str_list(raw.get("qualifications")),
+        "hard_requirements": _as_str_list(raw.get("hard_requirements")),
+    }

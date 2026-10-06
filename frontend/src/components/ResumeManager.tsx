@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { uploadCandidateResume, deleteCandidateResume, viewCandidateResume } from '../api/candidates'
 import type { Candidate } from '../types'
+import { RESUME_ACCEPT, resumeFileProblem } from '../utils/resumeFiles'
 import Button from './ui/Button'
 import './ResumeManager.css'
 
@@ -21,6 +22,8 @@ interface ResumeManagerProps {
 export default function ResumeManager({ candidate, onChanged }: ResumeManagerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // Caught in the browser before upload (image, over the size limit, wrong type).
+  const [fileProblem, setFileProblem] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   const uploadMutation = useMutation({
@@ -53,7 +56,15 @@ export default function ResumeManager({ candidate, onChanged }: ResumeManagerPro
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (file) uploadMutation.mutate(file)
+    if (!file) return
+    const problem = resumeFileProblem(file)
+    if (problem) {
+      setFileProblem(`${file.name}: ${problem}`)
+      e.target.value = ''
+      return
+    }
+    setFileProblem(null)
+    uploadMutation.mutate(file)
   }
 
   const hasResume = !!candidate.file_path
@@ -81,7 +92,7 @@ export default function ResumeManager({ candidate, onChanged }: ResumeManagerPro
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.docx"
+            accept={RESUME_ACCEPT}
             hidden
             onChange={handleFileChange}
             disabled={uploadMutation.isPending}
@@ -106,7 +117,8 @@ export default function ResumeManager({ candidate, onChanged }: ResumeManagerPro
         )}
       </div>
 
-      {uploadMutation.isError && <p className="error-text" role="alert">Could not upload — check it's a PDF or Word file under 5MB.</p>}
+      {fileProblem && <p className="error-text" role="alert">{fileProblem}</p>}
+      {uploadMutation.isError && <p className="error-text" role="alert">Could not upload — check it's a PDF or Word (.docx) file under 4MB.</p>}
       {deleteMutation.isError && <p className="error-text" role="alert">Could not delete the resume.</p>}
     </div>
   )

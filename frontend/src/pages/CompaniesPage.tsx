@@ -2,8 +2,11 @@ import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listCompanies, createCompany, viewCompanyDocument, setCompanyActive } from '../api/companies'
-import { listJobs, createJob, setJobStatus } from '../api/jobs'
+import { listJobs, createJob, setJobStatus, attachJdFile, updateJob, viewJdFile } from '../api/jobs'
 import { jobActiveLabel } from '../types'
+import type { JobPosting, JDAttachResult } from '../types'
+import RequisitionForm, { RequisitionSubmit, valuesFromJob, mergeJdFields } from '../components/RequisitionForm'
+import EditJobModal from '../components/EditJobModal'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
@@ -35,6 +38,53 @@ export default function CompaniesPage() {
       navigate(`/pipeline/${job.id}`)
     },
   })
+
+  // --- JD file on an existing job: attach/replace, then optionally update fields ---
+  const [attachingFor, setAttachingFor] = useState<string | null>(null)
+  const [attachError, setAttachError] = useState<{ jobId: string; text: string } | null>(null)
+  const [jdReview, setJdReview] = useState<{ job: JobPosting; result: JDAttachResult } | null>(null)
+  const [editingJob, setEditingJob] = useState<JobPosting | null>(null)
+
+  async function handleAttachJd(job: JobPosting, file: File | undefined) {
+    if (!file) return
+    setAttachError(null)
+    setAttachingFor(job.id)
+    try {
+      const result = await attachJdFile(job.id, file)
+      queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      setJdReview({ job: result.job, result })
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      setAttachError({ jobId: job.id, text: typeof detail === 'string' ? detail : 'Could not attach the JD file.' })
+    } finally {
+      setAttachingFor(null)
+    }
+  }
+
+  const updateJobMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: RequisitionSubmit }) =>
+      updateJob(id, {
+        title: data.title, locations: data.locations,
+        budget_min: data.budget_min, budget_max: data.budget_max,
+        experience_min: data.experience_min, experience_max: data.experience_max,
+        max_notice_days: data.max_notice_days, required_skills: data.required_skills,
+        skill_groups: data.skill_groups, related_titles: data.related_titles,
+        raw_text: data.raw_text,
+        ...(data.requirements && Object.keys(data.requirements).length ? { requirements: data.requirements } : {}),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      setJdReview(null)
+    },
+  })
+
+  async function openJd(job: JobPosting) {
+    try {
+      await viewJdFile(job)
+    } catch {
+      setAttachError({ jobId: job.id, text: 'Could not open the JD file.' })
+    }
+  }
 
   // Active/Inactive toggles -- labels only, nothing is blocked for inactive ones.
   const companyStatusMutation = useMutation({
@@ -68,20 +118,22 @@ export default function CompaniesPage() {
     })
   }
 
-  function handleJobSubmit(e: FormEvent<HTMLFormElement>, companyId: string) {
-    e.preventDefault()
-    const fd = new FormData(e.currentTarget)
+  function handleJobSubmit(data: RequisitionSubmit, companyId: string) {
     jobMutation.mutate({
       company_id: companyId,
-      title: String(fd.get('title')),
-      locations: String(fd.get('locations')).split(',').map((s) => s.trim()).filter(Boolean),
-      budget_min: Number(fd.get('budget_min')),
-      budget_max: Number(fd.get('budget_max')),
-      experience_min: Number(fd.get('experience_min')),
-      experience_max: Number(fd.get('experience_max')),
-      max_notice_days: Number(fd.get('max_notice_days')),
-      required_skills: String(fd.get('required_skills')).split(',').map((s) => s.trim()).filter(Boolean),
-      raw_text: String(fd.get('raw_text') || ''),
+      title: data.title,
+      locations: data.locations,
+      budget_min: data.budget_min,
+      budget_max: data.budget_max,
+      experience_min: data.experience_min,
+      experience_max: data.experience_max,
+      max_notice_days: data.max_notice_days,
+      required_skills: data.required_skills,
+      skill_groups: data.skill_groups,
+      related_titles: data.related_titles,
+      raw_text: data.raw_text,
+      jd_upload_token: data.jd_upload_token,
+      requirements: data.requirements,
     })
   }
 
@@ -127,6 +179,37 @@ export default function CompaniesPage() {
 
       {isLoading && <p className="muted">Loading companies...</p>}
 
+      {editingJob && <EditJobModal job={editingJob} onClose={() => setEditingJob(null)} />}
+
+      {jdReview && (
+        <div className="modal-overlay" onClick={() => setJdReview(null)}>
+          <div className="modal-panel modal-panel-wide" onClick={(e) => e.stopPropagation()}>
+            <h2>JD attached to {jdReview.job.title}</h2>
+            <p className="muted">
+              <strong>{jdReview.result.parse.file_name}</strong> is saved. You can view it any time with "View JD".
+              Do you also want to update this job's details from the JD? Check the values below and click Save, or close to keep the current details.
+            </p>
+            <RequisitionForm
+              initialValues={jdReview.result.parse.error
+                ? valuesFromJob(jdReview.job)
+                : mergeJdFields(valuesFromJob(jdReview.job), jdReview.result.parse.fields, jdReview.result.parse.raw_text)}
+              initialMissing={jdReview.result.parse.error ? [] : jdReview.result.parse.missing}
+              notice={jdReview.result.parse.error
+                ? <p className="jd-message jd-message-warn">{jdReview.result.parse.error}. The job's current details are shown.</p>
+                : <p className="jd-message jd-message-ok">Values found in the JD are filled in; details not in the JD keep the job's current values.</p>}
+              submitLabel={updateJobMutation.isPending ? 'Saving...' : 'Save job details'}
+              loading={updateJobMutation.isPending}
+              error={updateJobMutation.isError ? 'Could not update the job.' : null}
+              onSubmit={(data) => updateJobMutation.mutate({
+                id: jdReview.job.id,
+                data: { ...data, requirements: jdReview.result.parse.error ? null : jdReview.result.parse.requirements },
+              })}
+              onCancel={() => setJdReview(null)}
+            />
+          </div>
+        </div>
+      )}
+
       {companies?.map((company) => {
         const companyJobs = jobs?.filter((j) => j.company_id === company.id) || []
         return (
@@ -168,24 +251,14 @@ export default function CompaniesPage() {
             </div>
 
             {jdFormForCompany === company.id && (
-              <form className="jd-form" onSubmit={(e) => handleJobSubmit(e, company.id)}>
-                <div className="field"><label>Role title</label><input name="title" required /></div>
-                <div className="field"><label>Locations (comma separated)</label><input name="locations" placeholder="Mumbai, Remote" /></div>
-                <div className="row">
-                  <div className="field"><label>Budget min (₹)</label><input name="budget_min" type="number" required /></div>
-                  <div className="field"><label>Budget max (₹)</label><input name="budget_max" type="number" required /></div>
-                </div>
-                <div className="row">
-                  <div className="field"><label>Experience min (yrs)</label><input name="experience_min" type="number" step="0.5" required /></div>
-                  <div className="field"><label>Experience max (yrs)</label><input name="experience_max" type="number" step="0.5" required /></div>
-                </div>
-                <div className="field"><label>Max notice period (days)</label><input name="max_notice_days" type="number" defaultValue={45} required /></div>
-                <div className="field"><label>Required skills (comma separated)</label><input name="required_skills" placeholder="React, TypeScript" required /></div>
-                <div className="field"><label>Job description (optional, for AI extraction later)</label><textarea name="raw_text" rows={3} /></div>
-                <Button type="submit" loading={jobMutation.isPending}>
-                  {jobMutation.isPending ? 'Creating...' : 'Create requisition'}
-                </Button>
-              </form>
+              <RequisitionForm
+                allowJdUpload
+                submitLabel={jobMutation.isPending ? 'Creating...' : 'Create requisition'}
+                loading={jobMutation.isPending}
+                error={jobMutation.isError ? ((jobMutation.error as any)?.response?.data?.detail || 'Could not create the requisition.') : null}
+                onSubmit={(data) => handleJobSubmit(data, company.id)}
+                onCancel={() => setJdFormForCompany(null)}
+              />
             )}
 
             {companyJobs.length === 0 ? (
@@ -197,7 +270,26 @@ export default function CompaniesPage() {
                   <tbody>
                     {companyJobs.map((jd) => (
                       <tr key={jd.id}>
-                        <td><strong>{jd.title}</strong></td>
+                        <td>
+                          <strong>{jd.title}</strong>
+                          <div className="jd-file-actions">
+                            <button type="button" className="link-button" onClick={() => setEditingJob(jd)}>Edit job</button>
+                            {jd.has_jd_file && (
+                              <button type="button" className="link-button" onClick={() => void openJd(jd)}>View JD ↗</button>
+                            )}
+                            <label className={`link-button muted jd-attach-label${attachingFor === jd.id ? ' is-busy' : ''}`}>
+                              {attachingFor === jd.id ? 'Reading JD…' : jd.has_jd_file ? 'Replace JD' : 'Attach JD'}
+                              <input
+                                type="file"
+                                accept=".pdf,.docx"
+                                hidden
+                                disabled={attachingFor !== null}
+                                onChange={(e) => { void handleAttachJd(jd, e.target.files?.[0]); e.target.value = '' }}
+                              />
+                            </label>
+                          </div>
+                          {attachError?.jobId === jd.id && <div className="error-text">{attachError.text}</div>}
+                        </td>
                         <td>{jd.locations.join(', ')}</td>
                         <td>₹{(jd.budget_min / 100000).toFixed(1)}L – ₹{(jd.budget_max / 100000).toFixed(1)}L</td>
                         <td>{jd.experience_min}–{jd.experience_max} yrs</td>

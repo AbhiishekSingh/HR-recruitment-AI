@@ -5,15 +5,20 @@ from openai import AsyncOpenAI
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
+from app.services import ai_usage
 from app.services.llm.base import LLMProvider
-from app.services.llm.prompts.jd_extraction import build_jd_extraction_prompt
+from app.services.llm.prompts.jd_extraction import (
+    build_jd_extraction_prompt, build_jd_form_prompt, build_jd_form_vision_prompt,
+)
 from app.services.llm.prompts.resume_extraction import (
     build_resume_extraction_prompt,
     build_resume_transcription_prompt,
     build_resume_vision_prompt,
 )
 from app.services.llm.prompts.candidate_scoring import build_scoring_prompt
-from app.services.llm.validation import coerce_jd_extraction, coerce_resume_extraction, coerce_score_result
+from app.services.llm.validation import (
+    coerce_jd_extraction, coerce_jd_form_extraction, coerce_resume_extraction, coerce_score_result,
+)
 
 # Client-side timeout per call. gpt-5 is a reasoning model -- structured JSON
 # extraction over a full resume (and especially the vision-extraction path
@@ -62,6 +67,7 @@ class GPT5Provider(LLMProvider):
         # where the extra reasoning actually earns its cost.
         self.model = settings.llm_model_name
         self.extraction_model = settings.llm_extraction_model_name
+        self.scoring_model = settings.llm_scoring_model_name
 
     @retry(
         stop=stop_after_attempt(3),
@@ -75,6 +81,7 @@ class GPT5Provider(LLMProvider):
         model: str,
         reasoning_effort: str,
         max_output_tokens: int,
+        task: str = "other",
     ) -> dict:
         # No `temperature` param: GPT-5 (like the o-series reasoning models
         # before it) only accepts the API default and rejects any explicit
@@ -119,6 +126,9 @@ class GPT5Provider(LLMProvider):
                 "max_completion_tokens": max_output_tokens,
             },
         )
+        # Every attempt is billed (including ones retried below), so log it
+        # before anything can fail on the response itself.
+        await ai_usage.record(task, model, getattr(response, "usage", None))
         # A content-filtered or empty response comes back as None here, not
         # an exception -- treat it the same as malformed JSON so it goes
         # through the same retryable path instead of raising an unfiltered
@@ -135,14 +145,39 @@ class GPT5Provider(LLMProvider):
             model=self.extraction_model,
             reasoning_effort="minimal",
             max_output_tokens=800,
+            task="jd_requirements",
         )
         return coerce_jd_extraction(raw)
+
+    async def extract_jd_form(self, jd_text: str) -> dict:
+        # Same cheap extraction model as resumes. 1800 tokens leaves room
+        # for hidden reasoning plus the longer schema (see extract_resume's
+        # comment on why a too-small cap returns empty JSON).
+        raw = await self._call(
+            build_jd_form_prompt(jd_text),
+            model=self.extraction_model,
+            reasoning_effort="minimal",
+            max_output_tokens=2600,
+            task="jd_reading",
+        )
+        return coerce_jd_form_extraction(raw)
+
+    async def extract_jd_form_from_images(self, images_b64: list[str]) -> dict:
+        raw = await self._call(
+            build_jd_form_vision_prompt(images_b64),
+            model=self.extraction_model,
+            reasoning_effort="minimal",
+            max_output_tokens=2600,
+            task="jd_reading",
+        )
+        return coerce_jd_form_extraction(raw)
 
     async def extract_resume(self, resume_text: str) -> dict:
         raw = await self._call(
             build_resume_extraction_prompt(resume_text),
             model=self.extraction_model,
             reasoning_effort="minimal",
+            task="resume_extraction",
             # Was 1200. max_completion_tokens caps TOTAL output, including the
             # model's hidden reasoning tokens -- not just the visible JSON
             # answer (see _call()'s docstring). Adding sector/position_role
@@ -167,6 +202,7 @@ class GPT5Provider(LLMProvider):
             model=self.extraction_model,
             reasoning_effort="minimal",
             max_output_tokens=2200,  # see extract_resume()'s comment
+            task="resume_vision",
         )
         return coerce_resume_extraction(raw)
 
@@ -176,7 +212,7 @@ class GPT5Provider(LLMProvider):
         retry=retry_if_exception_type(RETRYABLE_ERRORS[:-1]),  # no JSON here, see below
         reraise=True,
     )
-    async def _call_text(self, messages: list[dict], model: str, max_output_tokens: int) -> str:
+    async def _call_text(self, messages: list[dict], model: str, max_output_tokens: int, task: str = "other") -> str:
         # Separate from _call(): transcription output is plain text, not
         # JSON, so this skips response_format={"type": "json_object"}
         # (OpenAI's JSON mode requires the prompt to literally ask for JSON,
@@ -191,6 +227,7 @@ class GPT5Provider(LLMProvider):
                 "max_completion_tokens": max_output_tokens,
             },
         )
+        await ai_usage.record(task, model, getattr(response, "usage", None))
         return response.choices[0].message.content or ""
 
     async def transcribe_resume_images(self, images_b64: list[str]) -> str:
@@ -209,20 +246,23 @@ class GPT5Provider(LLMProvider):
                 # schema to compress into), so this gets more headroom than
                 # extract_resume_from_images()'s 2200.
                 max_output_tokens=3500,
+                task="resume_transcription",
             )
         except Exception:
             return ""
 
     async def score_candidate(self, jd_requirements: dict, candidate_profile: dict) -> dict:
-        # Stays on the full model with a bit more reasoning headroom than
-        # extraction ("low" vs "minimal") -- this is the judgment call that
-        # actually decides who gets shortlisted, so it's the one place
-        # worth spending more than the bare minimum.
+        # On-demand only ("AI score top 20" etc.), on gpt-5-mini by default
+        # (settings.llm_scoring_model_name). "low" reasoning: this is the
+        # judgement call, so a little more thinking than extraction. 1500
+        # tokens leaves room for reasoning + strengths/gaps -- 600 was too
+        # tight once reasons were added and would return empty JSON.
         raw = await self._call(
             build_scoring_prompt(jd_requirements, candidate_profile),
-            model=self.model,
+            model=self.scoring_model,
             reasoning_effort="low",
-            max_output_tokens=600,
+            max_output_tokens=1500,
+            task="candidate_scoring",
         )
         return coerce_score_result(raw)
 

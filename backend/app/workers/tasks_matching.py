@@ -15,6 +15,8 @@ from app.services.search.hybrid_search import hybrid_search
 from app.models.job_posting import JobPosting
 from app.models.candidate_profile import CandidateProfile
 from app.models.match_result import MatchResult
+from app.services import ai_usage
+from app.services.scoring.job_config import ai_requirements, effective_config, job_embedding_text, profile_version, scoring_hash
 
 # Caps how many GPT-5 scoring calls run at once per job. Keeps a 500-candidate
 # job from firing 500 simultaneous requests (rate limits, cost spikes) while
@@ -142,12 +144,15 @@ async def _run_matching(job_id: str, top_k: int | None):
         # under a concurrency cap.
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCORING_CALLS)
 
+        config = effective_config(job)
+        payload = ai_requirements(job, config)
+
         async def score_one(candidate_id):
             profile = profiles_by_candidate.get(candidate_id)
             if not profile:
                 return None
 
-            req_hash = _compute_requirements_hash(job.requirements, profile.extraction_model_version)
+            req_hash = scoring_hash(job, config, profile_version(profile))
             if existing_hashes.get(candidate_id) == req_hash:
                 # Requirements + extraction unchanged since last score for
                 # this pair -> the stored MatchResult is still accurate,
@@ -162,7 +167,8 @@ async def _run_matching(job_id: str, top_k: int | None):
                 "total_experience_years": profile.total_experience_years,
             }
             async with semaphore:
-                result = await llm.score_candidate(job.requirements, candidate_profile_dict)
+                with ai_usage.usage_context(job_id=job.id, candidate_id=candidate_id):
+                    result = await llm.score_candidate(payload, candidate_profile_dict)
             return candidate_id, result, req_hash
 
         outcomes = await asyncio.gather(*(score_one(cid) for cid in candidate_ids))
@@ -177,7 +183,7 @@ async def _run_matching(job_id: str, top_k: int | None):
                 candidate_id=candidate_id,
                 score_result=result,
                 requirements_hash=req_hash,
-                model_version=llm.model,
+                model_version=getattr(llm, "scoring_model", llm.model),
             )
 
         await db.commit()
@@ -187,3 +193,111 @@ def _build_jd_summary(requirements: dict) -> str:
     req = ", ".join(requirements.get("required_skills", []))
     resp = "; ".join(requirements.get("responsibilities", []))
     return f"Required skills: {req}\nResponsibilities: {resp}"
+
+
+
+# ---------------------------------------------------------------------------
+# Job "meaning match" embedding (free smart score)
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, max_retries=2)
+def embed_job_task(self, job_id: str):
+    """Embeds the job's skills/title/responsibilities with the same model as
+    resumes, so the smart score can compare meaning. ~₹0.001 per job."""
+    try:
+        asyncio.run(_embed_job(job_id))
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=5 * (self.request.retries + 1))
+
+
+async def _embed_job(job_id: str):
+    async with AsyncSessionLocal() as db:
+        job = await db.get(JobPosting, uuid.UUID(job_id))
+        if not job or job.deleted_at is not None:
+            return
+        embedder = get_embedding_provider()
+        try:
+            with ai_usage.usage_context(job_id=job.id):
+                vectors = await embedder.embed([job_embedding_text(job, effective_config(job))])
+            job.embedding = vectors[0]
+            await db.commit()
+        finally:
+            await embedder.aclose()
+
+
+# ---------------------------------------------------------------------------
+# On-demand AI scoring ("AI score top 20", "above 70", single candidate)
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, max_retries=1)
+def ai_score_candidates_task(self, job_id: str, candidate_ids: list[str]):
+    """AI-scores exactly the candidates HR chose. Skips any whose AI score is
+    already up to date (same job settings + same resume), so a double click
+    never charges twice."""
+    try:
+        asyncio.run(_ai_score_candidates(job_id, candidate_ids))
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=10)
+
+
+async def _ai_score_candidates(job_id: str, candidate_ids: list[str]):
+    async with AsyncSessionLocal() as db:
+        job = await db.get(JobPosting, uuid.UUID(job_id))
+        if not job or job.deleted_at is not None:
+            return
+        config = effective_config(job)
+        payload = ai_requirements(job, config)
+        ids = [uuid.UUID(c) for c in candidate_ids]
+
+        profiles = {
+            p.candidate_id: p for p in (await db.execute(
+                select(CandidateProfile).where(CandidateProfile.candidate_id.in_(ids))
+            )).scalars().all()
+        }
+        existing = {
+            row.candidate_id: row.requirements_hash for row in (await db.execute(
+                select(MatchResult.candidate_id, MatchResult.requirements_hash)
+                .where(MatchResult.job_id == job.id, MatchResult.candidate_id.in_(ids))
+            )).all()
+        }
+
+        llm = get_llm_provider()
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCORING_CALLS)
+
+        async def score_one(cid):
+            profile = profiles.get(cid)
+            if not profile:
+                return None
+            req_hash = scoring_hash(job, config, profile_version(profile))
+            if existing.get(cid) == req_hash:
+                return None  # already up to date -- no charge
+            profile_dict = {
+                "position_role": profile.position_role,
+                "skills": profile.skills,
+                "work_history": profile.work_history,
+                "education": profile.education,
+                "certifications": profile.certifications,
+                "total_experience_years": profile.total_experience_years,
+            }
+            async with semaphore:
+                with ai_usage.usage_context(job_id=job.id, candidate_id=cid):
+                    try:
+                        result = await llm.score_candidate(payload, profile_dict)
+                    except Exception:
+                        return None  # one failure never stops the others
+            return cid, result, req_hash
+
+        try:
+            outcomes = await asyncio.gather(*(score_one(c) for c in ids))
+        finally:
+            await llm.aclose()
+
+        for outcome in outcomes:
+            if outcome is None:
+                continue
+            cid, result, req_hash = outcome
+            await _upsert_match_result(
+                db, job_id=job.id, candidate_id=cid, score_result=result,
+                requirements_hash=req_hash, model_version=getattr(llm, "scoring_model", "ai"),
+            )
+        await db.commit()

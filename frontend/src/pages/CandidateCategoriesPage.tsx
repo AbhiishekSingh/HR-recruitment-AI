@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { getSectorCounts } from '../api/candidates'
+import { getSectorCounts, getCandidateOverview } from '../api/candidates'
 import PageHeader from '../components/ui/PageHeader'
 import EmptyState from '../components/ui/EmptyState'
 import Button from '../components/ui/Button'
@@ -36,6 +36,14 @@ export default function CandidateCategoriesPage() {
   const { data: counts, isLoading } = useQuery({
     queryKey: ['candidateSectorCounts'],
     queryFn: getSectorCounts,
+  })
+  // Total + the resumes that are NOT on a sector card (failed, still
+  // processing, unclassified), so the numbers on this page always add up
+  // to the real number of resumes uploaded.
+  const { data: overview } = useQuery({
+    queryKey: ['candidateOverview'],
+    queryFn: getCandidateOverview,
+    refetchInterval: 10000,
   })
 
   const countBySector = new Map((counts || []).map((c) => [c.sector, c.count]))
@@ -86,6 +94,45 @@ export default function CandidateCategoriesPage() {
 
       {view === 'categories' && (
         <>
+          {overview && overview.total > 0 && (
+            <>
+              <p className="muted categories-total">
+                <strong>{overview.total}</strong> resume{overview.total === 1 ? '' : 's'} in total
+                {' '}= {overview.classified} in sector cards
+                {overview.needs_attention > 0 && <> + {overview.needs_attention} need attention</>}
+                {overview.processing > 0 && <> + {overview.processing} processing</>}
+                {overview.unclassified > 0 && <> + {overview.unclassified} unclassified</>}
+                {' · '}<button type="button" className="link-button" onClick={() => navigate('/candidates')}>View all</button>
+              </p>
+              <div className="sector-card-grid status-card-grid">
+                {overview.needs_attention > 0 && (
+                  <button className="card sector-card status-card status-card-bad" onClick={() => navigate('/candidates?status=attention')}>
+                    <div className="sector-card-name">⚠ Needs attention</div>
+                    <div className="sector-card-count">{overview.needs_attention} resume{overview.needs_attention === 1 ? '' : 's'}: AI processing failed, see reason &amp; retry</div>
+                  </button>
+                )}
+                {overview.processing > 0 && (
+                  <button className="card sector-card status-card status-card-warn" onClick={() => navigate('/candidates?status=processing')}>
+                    <div className="sector-card-name">⏳ Still processing</div>
+                    <div className="sector-card-count">{overview.processing} resume{overview.processing === 1 ? '' : 's'}</div>
+                  </button>
+                )}
+                {overview.duplicates > 0 && (
+                  <button className="card sector-card status-card status-card-warn" onClick={() => navigate('/candidates?status=duplicates')}>
+                    <div className="sector-card-name">⧉ Possible duplicates</div>
+                    <div className="sector-card-count">{overview.duplicates} resume{overview.duplicates === 1 ? '' : 's'} match an earlier candidate</div>
+                  </button>
+                )}
+                {overview.unclassified > 0 && (
+                  <button className="card sector-card status-card" onClick={() => navigate('/candidates?status=unclassified')}>
+                    <div className="sector-card-name">Unclassified</div>
+                    <div className="sector-card-count">{overview.unclassified} resume{overview.unclassified === 1 ? '' : 's'} with no sector</div>
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+
           {isLoading && <p className="muted">Loading...</p>}
           {!isLoading && sectorsToShow.length === 0 && (
             <EmptyState message="No candidates have been classified into a sector yet — upload some resumes to get started." />
